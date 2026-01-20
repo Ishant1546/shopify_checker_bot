@@ -1,0 +1,21 @@
+[build]
+  command = "pip install -r requirements.txt && mkdir -p functions"
+  publish = "."
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/shopify/:splat"
+  status = 200
+
+[functions]
+  node_bundler = "esbuild"
+  included_files = [
+    "shopify.py",
+    "requirements.txt",
+    "pyproject.toml",
+    "poetry.lock"
+  ]
+
+[dev]
+  publish = "."
+  command = "python shopify.py"

@@ -19,7 +19,7 @@ from faker import Faker  # NEW: Faker for randomized data
 import uuid  # NEW: For generating unique identifiers
 
 BOT_TOKEN = '8200762474:AAHWffqjDuahGqy9UFMfYI8OsnkR1USYQEE'
-ADMIN_CHAT_ID = 8564010885
+ADMIN_CHAT_ID = 8079395886
 
 logging.getLogger('telebot').setLevel(logging.CRITICAL)
 logging.basicConfig(level=logging.CRITICAL)

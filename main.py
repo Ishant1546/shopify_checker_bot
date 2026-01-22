@@ -653,7 +653,7 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
 
 # ==================== COMMAND HANDLERS ====================
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, context: ContextTypes):
     """Handle /start command"""
     # Determine if this is from message or callback
     if update.message:

@@ -1945,13 +1945,14 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
-def main():
+async def main():
     """Start the bot"""
     # Check if token exists
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN not found! Set it in environment variables.")
         return
     
+    # Create application
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Add error handler
@@ -2011,15 +2012,7 @@ def main():
     print("✅ Bot is running...")
     
     # Run the bot
-    try:
-        application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES,
-            close_loop=False
-        )
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        raise
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

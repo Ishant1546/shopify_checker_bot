@@ -1,4 +1,0 @@
-requests==2.31.0
-fake-useragent==1.4.0
-pyTelegramBotAPI==4.14.1
-Faker==19.1.0

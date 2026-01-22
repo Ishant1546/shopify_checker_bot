@@ -7,11 +7,18 @@ import os
 import re
 import aiohttp
 import string
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import (
+    Application, 
+    CommandHandler, 
+    MessageHandler, 
+    CallbackQueryHandler, 
+    ContextTypes,
+    filters
+)
 from telegram.constants import ParseMode
 from telegram.error import NetworkError, BadRequest, TimedOut
-import logging
 
 # ==================== CONFIGURATION ====================
 # Use environment variables for Render

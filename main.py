@@ -13,21 +13,22 @@ from telegram.constants import ParseMode
 from telegram.error import NetworkError, BadRequest, TimedOut
 import logging
 
+# ==================== CONFIGURATION ====================
+# Use environment variables for Render
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8589155979:AAEMu9RnHZ71AE9AJ15b7WfasGj2EB5My-8")
+ADMIN_IDS = [8079395886]  # Add your Telegram ID
+CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/+zsK6NPGgvSc4NzM1")
+
+# Stripe configuration
+DOMAIN = os.environ.get("DOMAIN", "https://dainte.com")
+PK = os.environ.get("STRIPE_PK", "pk_live_51F0CDkINGBagf8ROVbhXA43bHPn9cGEHEO55TN2mfNGYsbv2DAPuv6K0LoVywNJKNuzFZ4xGw94nVElyYg1Aniaf00QDrdzPhf")
+
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# Bot configuration
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_IDS = os.environ.get("ADMIN_IDS", "")
-CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "")
-
-# Stripe configuration
-DOMAIN = "https://dainte.com"
-PK = "pk_live_51F0CDkINGBagf8ROVbhXA43bHPn9cGEHEO55TN2mfNGYsbv2DAPuv6K0LoVywNJKNuzFZ4xGw94nVElyYg1Aniaf00QDrdzPhf"
 
 # In-memory storage (will be replaced with database later)
 user_data = {}
@@ -1939,6 +1940,11 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot"""
+    # Check if token exists
+    if not BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN not found! Set it in environment variables.")
+        return
+    
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Add error handler
@@ -1987,18 +1993,26 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_botinfo_callback, pattern="^admin_botinfo$"))
     
     # ========== UNKNOWN COMMAND HANDLER ==========
-    # Must be added LAST to catch all other commands
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     
     # Start bot
     print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
+    print(f"📡 Starting bot with token: {BOT_TOKEN[:10]}...")
     print(f"⚡ Speed: 5 cards/second")
-    print(f"📍 Address Rotation: Enabled (US, UK, CA, IN, AU)")
     print(f"📊 Statistics Tracking: Enabled")
     print(f"🔐 Admin Commands: {len(ADMIN_IDS)} admin(s)")
     print("✅ Bot is running...")
     
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Run the bot
+    try:
+        application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+            close_loop=False
+        )
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        raise
 
 if __name__ == "__main__":
     main()

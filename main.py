@@ -20,14 +20,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
 # Bot configuration
-BOT_TOKEN = "8163640062:AAFJm_0bYqBZTGFXHB7FlfJOC-PZVaFJ9Z4"
-ADMIN_IDS = [8079395886]  # Your Telegram ID
-CHANNEL_LINK = "https://t.me/+zsK6NPGgvSc4NzM1"  # Your private channel link
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
 
 # Stripe configuration
-DOMAIN = "https://dainte.com"
-PK = "pk_live_51F0CDkINGBagf8ROVbhXA43bHPn9cGEHEO55TN2mfNGYsbv2DAPuv6K0LoVywNJKNuzFZ4xGw94nVElyYg1Aniaf00QDrdzPhf"
+DOMAIN = os.getenv("DOMAIN", "")
+PK = os.getenv("STRIPE_PK", "")
 
 # In-memory storage (will be replaced with database later)
 user_data = {}

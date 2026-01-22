@@ -21,9 +21,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-BOT_TOKEN = "8589155979:AAEMu9RnHZ71AE9AJ15b7WfasGj2EB5My-8"
-ADMIN_IDS = [8079395886]  # Your Telegram ID
-CHANNEL_LINK = "https://t.me/+zsK6NPGgvSc4NzM1"  # Your private channel link
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+ADMIN_IDS = os.environ.get("ADMIN_IDS", "")
+CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "")
 
 # Stripe configuration
 DOMAIN = "https://dainte.com"

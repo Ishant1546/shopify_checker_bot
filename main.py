@@ -12,6 +12,18 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram.constants import ParseMode
 from telegram.error import NetworkError, BadRequest, TimedOut
 import logging
+from telegram.helpers import escape_markdown
+import asyncpg
+
+# Add this function to properly escape markdown
+def escape_markdown_v2(text):
+    """Escape markdown v2 special characters"""
+    if not text:
+        return text
+    escape_chars = '_*[]()~`>#+-=|{}.!'
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
 
 # Configure logging
 logging.basicConfig(
@@ -21,30 +33,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
-CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
+BOT_TOKEN = "8163640062:AAFJm_0bYqBZTGFXHB7FlfJOC-PZVaFJ9Z4"
+ADMIN_IDS = [8079395886]  # Your Telegram ID
+CHANNEL_LINK = "https://t.me/+zsK6NPGgvSc4NzM1"  # Your private channel link
+
+# Database configuration
+DATABASE_URL = "postgresql://postgres:[YOUR-PASSWORD]@db.bipzipmraeyjirghdlbm.supabase.co:5432/postgres"  # Update with your Supabase credentials
 
 # Stripe configuration
-DOMAIN = os.getenv("DOMAIN", "")
-PK = os.getenv("STRIPE_PK", "")
-
-# In-memory storage (will be replaced with database later)
-user_data = {}
-checking_tasks = {}
-gift_codes = {}
-user_claimed_codes = {}
-files_storage = {}
-setup_intent_cache = {}
-last_cache_time = 0
-bot_statistics = {
-    "total_checks": 0,
-    "total_approved": 0,
-    "total_declined": 0,
-    "total_credits_used": 0,
-    "total_users": 0,
-    "start_time": datetime.datetime.now().isoformat()
-}
+DOMAIN = "https://dainte.com"
+PK = "pk_live_51F0CDkINGBagf8ROVbhXA43bHPn9cGEHEO55TN2mfNGYsbv2DAPuv6K0LoVywNJKNuzFZ4xGw94nVElyYg1Aniaf00QDrdzPhf"
 
 # Bot info
 BOT_INFO = {
@@ -52,7 +50,7 @@ BOT_INFO = {
     "version": "v4.0",
     "creator": "@DarkXCode",
     "gates": "Stripe (dainte.com)",
-    "features": "• Ultra-Fast Single Check\n• Mass Check with Live Results\n• Gift Code System\n• Advanced Admin Panel\n• Real-time Statistics"
+    "features": "• Ultra-Fast Single Check\n• Mass Check with Live Results\n• Gift Code System\n• Advanced Admin Panel\n• Real-time Statistics\n• Invite & Earn System"
 }
 
 # User-Agent rotation list
@@ -107,6 +105,159 @@ BILLING_ADDRESSES = {
     ]
 }
 
+# Database connection pool
+db_pool = None
+
+async def init_database():
+    """Initialize database connection"""
+    global db_pool
+    try:
+        db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+        logger.info("Database connection established")
+        
+        # Create tables if they don't exist
+        async with db_pool.acquire() as conn:
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    joined_date TIMESTAMP DEFAULT NOW(),
+                    last_active TIMESTAMP DEFAULT NOW(),
+                    credits INTEGER DEFAULT 0,
+                    credits_spent INTEGER DEFAULT 0,
+                    total_checks INTEGER DEFAULT 0,
+                    approved_cards INTEGER DEFAULT 0,
+                    declined_cards INTEGER DEFAULT 0,
+                    checks_today INTEGER DEFAULT 0,
+                    last_check_date DATE,
+                    joined_channel BOOLEAN DEFAULT FALSE,
+                    referrer_id BIGINT,
+                    referrals_count INTEGER DEFAULT 0,
+                    earned_from_referrals INTEGER DEFAULT 0
+                )
+            ''')
+            
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS gift_codes (
+                    code TEXT PRIMARY KEY,
+                    credits INTEGER NOT NULL,
+                    max_uses INTEGER,
+                    uses INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    created_by BIGINT,
+                    claimed_by TEXT[] DEFAULT '{}'
+                )
+            ''')
+            
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_claimed_codes (
+                    user_id BIGINT,
+                    code TEXT,
+                    claimed_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (user_id, code)
+                )
+            ''')
+            
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS bot_statistics (
+                    id SERIAL PRIMARY KEY,
+                    total_checks INTEGER DEFAULT 0,
+                    total_approved INTEGER DEFAULT 0,
+                    total_declined INTEGER DEFAULT 0,
+                    total_credits_used INTEGER DEFAULT 0,
+                    total_users INTEGER DEFAULT 0,
+                    start_time TIMESTAMP DEFAULT NOW()
+                )
+            ''')
+            
+            # Initialize bot statistics if not exists
+            await conn.execute('''
+                INSERT INTO bot_statistics (id) VALUES (1)
+                ON CONFLICT (id) DO NOTHING
+            ''')
+            
+            logger.info("Database tables created/verified")
+            
+    except Exception as e:
+        logger.error(f"Database initialization error: {e}")
+        raise
+
+async def get_user(user_id):
+    """Get user from database"""
+    async with db_pool.acquire() as conn:
+        user = await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)
+        if not user:
+            # Create new user
+            await conn.execute('''
+                INSERT INTO users (user_id, joined_date, last_active)
+                VALUES ($1, NOW(), NOW())
+            ''', user_id)
+            # Increment total users in statistics
+            await conn.execute('''
+                UPDATE bot_statistics 
+                SET total_users = total_users + 1 
+                WHERE id = 1
+            ''')
+            # Fetch the newly created user
+            user = await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)
+        return user
+
+async def update_user(user_id, updates):
+    """Update user data in database"""
+    async with db_pool.acquire() as conn:
+        set_clause = ', '.join([f"{k} = ${i+2}" for i, k in enumerate(updates.keys())])
+        values = [user_id] + list(updates.values())
+        query = f'UPDATE users SET {set_clause}, last_active = NOW() WHERE user_id = $1'
+        await conn.execute(query, *values)
+
+async def get_bot_stats():
+    """Get bot statistics from database"""
+    async with db_pool.acquire() as conn:
+        stats = await conn.fetchrow('SELECT * FROM bot_statistics WHERE id = 1')
+        return stats
+
+async def update_bot_stats(updates):
+    """Update bot statistics"""
+    async with db_pool.acquire() as conn:
+        set_clause = ', '.join([f"{k} = {k} + ${i+1}" for i, k in enumerate(updates.keys())])
+        values = list(updates.values())
+        query = f'UPDATE bot_statistics SET {set_clause} WHERE id = 1'
+        await conn.execute(query, *values)
+
+async def create_gift_code(code, credits, max_uses, created_by):
+    """Create a gift code in database"""
+    async with db_pool.acquire() as conn:
+        await conn.execute('''
+            INSERT INTO gift_codes (code, credits, max_uses, created_by)
+            VALUES ($1, $2, $3, $4)
+        ''', code, credits, max_uses, created_by)
+
+async def get_gift_code(code):
+    """Get gift code from database"""
+    async with db_pool.acquire() as conn:
+        return await conn.fetchrow('SELECT * FROM gift_codes WHERE code = $1', code)
+
+async def update_gift_code_usage(code, user_id):
+    """Update gift code usage"""
+    async with db_pool.acquire() as conn:
+        await conn.execute('''
+            UPDATE gift_codes 
+            SET uses = uses + 1, claimed_by = array_append(claimed_by, $2::text)
+            WHERE code = $1
+        ''', code, str(user_id))
+        
+        await conn.execute('''
+            INSERT INTO user_claimed_codes (user_id, code)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id, code) DO NOTHING
+        ''', user_id, code)
+
+async def get_all_gift_codes():
+    """Get all gift codes"""
+    async with db_pool.acquire() as conn:
+        return await conn.fetch('SELECT * FROM gift_codes ORDER BY created_at DESC')
+
 def parseX(data, start, end):
     try:
         if not data or not start or not end:
@@ -125,30 +276,6 @@ def generate_gift_code(length=16):
     """Generate a random gift code"""
     characters = string.ascii_uppercase + string.digits
     return ''.join(random.choice(characters) for _ in range(length))
-
-def initialize_user(user_id):
-    """Initialize user data if not exists"""
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "credits": 0,
-            "checks_today": 0,
-            "total_checks": 0,
-            "joined_channel": False,
-            "last_check": None,
-            "joined_date": datetime.datetime.now().isoformat(),
-            "approved_cards": 0,
-            "declined_cards": 0,
-            "credits_spent": 0,
-            "first_name": "",
-            "username": ""
-        }
-        bot_statistics["total_users"] += 1
-    return user_data[user_id]
-
-def check_channel_membership(user_id):
-    """Check if user has joined channel"""
-    user = initialize_user(user_id)
-    return user.get("joined_channel", False)
 
 def get_billing_address(card_bin=""):
     """Get random billing address based on card BIN or random country"""
@@ -174,6 +301,12 @@ def get_billing_address(card_bin=""):
             country = random.choice(list(BILLING_ADDRESSES.keys()))
     
     return random.choice(BILLING_ADDRESSES[country])
+
+# In-memory cache for checking tasks (temporary storage)
+checking_tasks = {}
+files_storage = {}
+setup_intent_cache = {}
+last_cache_time = 0
 
 async def get_setup_intent():
     """Get setup intent nonce with caching"""
@@ -368,7 +501,7 @@ async def my_credits_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         pass
     
     user_id = query.from_user.id
-    user = initialize_user(user_id)
+    user = await get_user(user_id)
     
     await query.edit_message_text(
         f"*💰 YOUR CREDITS*\n"
@@ -381,14 +514,15 @@ async def my_credits_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"*Get More Credits:*\n"
         f"1. Ask admin for credits\n"
         f"2. Claim gift codes with /claim\n"
-        f"3. Wait for promotions\n\n"
+        f"3. Invite friends and earn 50 credits each\n"
+        f"4. Wait for promotions\n\n"
         f"*Note:* Credits are deducted for all check attempts.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
     )
 
-async def my_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle my stats callback"""
+async def invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle invite callback"""
     query = update.callback_query
     
     try:
@@ -397,32 +531,54 @@ async def my_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
     
     user_id = query.from_user.id
-    user = initialize_user(user_id)
     
-    # Calculate success rate
-    total_checks = user.get('total_checks', 0)
-    approved_cards = user.get('approved_cards', 0)
-    success_rate = (approved_cards / total_checks * 100) if total_checks > 0 else 0
+    # Generate invite link
+    bot_username = (await context.bot.get_me()).username
+    invite_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
     
     await query.edit_message_text(
-        f"*📊 YOUR STATISTICS*\n"
+        f"*🤝 INVITE & EARN*\n"
         f"══════════════════════\n"
-        f"*User ID:* `{user_id}`\n"
-        f"*Username:* @{user.get('username', 'N/A')}\n\n"
-        f"*Credits:*\n"
-        f"• Available: {user.get('credits', 0)}\n"
-        f"• Spent: {user.get('credits_spent', 0)}\n\n"
-        f"*Today's Activity:*\n"
-        f"• Checks: {user.get('checks_today', 0)}\n"
-        f"• ✅ Approved: {approved_cards}\n"
-        f"• ❌ Declined: {user.get('declined_cards', 0)}\n\n"
-        f"*All Time Stats:*\n"
-        f"• Total Checks: {total_checks}\n"
-        f"• Success Rate: {success_rate:.1f}%\n"
-        f"• Last Check: {user.get('last_check', 'Never')[:19] if user.get('last_check') else 'Never'}\n\n"
-        f"*Channel Status:* {'✅ Joined' if user.get('joined_channel', False) else '❌ Not Joined'}",
+        f"*Your Invite Link:*\n"
+        f"`{invite_link}`\n\n"
+        f"*How it works:*\n"
+        f"1. Share your invite link with friends\n"
+        f"2. When they join using your link:\n"
+        f"   • You get 50 credits\n"
+        f"   • They get 10 credits\n"
+        f"3. Earn unlimited credits!\n\n"
+        f"*Your Referrals:* {0}\n"  # We'll add this later
+        f"*Earned from Referrals:* {0} credits\n\n"  # We'll add this later
+        f"*Copy and share your link now!*",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Copy Link", callback_data="copy_invite")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+        ])
+    )
+
+async def copy_invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle copy invite callback"""
+    query = update.callback_query
+    
+    try:
+        await query.answer("Invite link copied to your message input!")
+    except BadRequest:
+        pass
+    
+    # This will show the link in the message input field
+    user_id = query.from_user.id
+    bot_username = (await context.bot.get_me()).username
+    invite_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    
+    await query.edit_message_text(
+        f"*📋 INVITE LINK*\n"
+        f"══════════════════════\n"
+        f"Copy this link and share with friends:\n\n"
+        f"`{invite_link}`\n\n"
+        f"*Already copied to your message input!*",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="invite")]])
     )
 
 async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -646,7 +802,7 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
 # ==================== COMMAND HANDLERS ====================
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
+    """Handle /start command with referral system"""
     # Determine if this is from message or callback
     if update.message:
         message = update.message
@@ -661,14 +817,46 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
     
-    user = initialize_user(user_id)
+    # Check for referral parameter
+    referrer_id = None
+    if context.args and context.args[0].startswith('ref_'):
+        try:
+            referrer_id = int(context.args[0].replace('ref_', ''))
+        except ValueError:
+            referrer_id = None
     
-    # Update user info
-    user["first_name"] = user_name
-    user["username"] = username
+    user = await get_user(user_id)
+    
+    # Update user info if needed
+    updates = {}
+    if user['username'] != username:
+        updates['username'] = username
+    if user['first_name'] != user_name:
+        updates['first_name'] = user_name
+    
+    # Handle referral if it's a new user with referrer
+    if referrer_id and referrer_id != user_id and not user['referrer_id']:
+        updates['referrer_id'] = referrer_id
+        
+        # Add credits to new user
+        updates['credits'] = user['credits'] + 10
+        
+        # Update referrer's credits
+        async with db_pool.acquire() as conn:
+            await conn.execute('''
+                UPDATE users 
+                SET credits = credits + 50, 
+                    referrals_count = referrals_count + 1,
+                    earned_from_referrals = earned_from_referrals + 50
+                WHERE user_id = $1
+            ''', referrer_id)
+    
+    if updates:
+        await update_user(user_id, updates)
+        user = await get_user(user_id)  # Refresh user data
     
     # Check channel membership
-    if not check_channel_membership(user_id):
+    if not user['joined_channel']:
         keyboard = [
             [InlineKeyboardButton("✅ Join Private Channel", url=CHANNEL_LINK)],
             [InlineKeyboardButton("🔄 Verify Join", callback_data="verify_join")]
@@ -690,10 +878,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # User has joined channel
-    user["joined_channel"] = True
+    await update_user(user_id, {'joined_channel': True})
     
     # Check if user is admin
     is_admin = user_id in ADMIN_IDS
+    
+    # Check if user came from referral
+    referral_bonus_text = ""
+    if user['referrer_id']:
+        referral_bonus_text = f"🎁 *Referral Bonus:* +10 credits (from invitation)\n"
     
     # Prepare welcome message
     welcome_text = f"""*{BOT_INFO['name']}*
@@ -704,14 +897,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Credits: *{user['credits']}*
 • Today: ✅{user.get('approved_cards', 0)} ❌{user.get('declined_cards', 0)}
 • Total Checks: *{user['total_checks']}*
-
+{referral_bonus_text}
 *User Commands:*
 • `/chk cc|mm|yy|cvv` - Check single card
 • `/mchk` - Upload file for mass check
-• `/myinfo` - Your statistics
 • `/credits` - Check balance
 • `/claim CODE` - Redeem gift code
 • `/info` - Bot information
+• `/invite` - Invite friends & earn credits
 • `/cancel` - Cancel mass check
 • `/help` - This help
 """
@@ -737,7 +930,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⚡ Check Card", callback_data="quick_check")],
         [InlineKeyboardButton("📊 Mass Check", callback_data="mass_check")],
         [InlineKeyboardButton("💰 My Credits", callback_data="my_credits"),
-         InlineKeyboardButton("📈 My Stats", callback_data="my_stats")]
+         InlineKeyboardButton("🤝 Invite & Earn", callback_data="invite")]
     ]
     
     # Add admin panel button for admins
@@ -755,6 +948,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /info command - Shows public bot info"""
     user_id = update.effective_user.id
+    
+    # Get user stats for display
+    user = await get_user(user_id)
     is_admin = user_id in ADMIN_IDS
     
     # Prepare info message
@@ -767,13 +963,17 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 *Features:*
 {BOT_INFO['features']}
 
+*Your Stats:*
+• Credits: *{user['credits']}*
+• Total Checks: *{user['total_checks']}*
+
 *User Commands:*
 • `/start` - Start bot
 • `/chk cc|mm|yy|cvv` - Check single card
 • `/mchk` - Upload file for mass check
-• `/myinfo` - Your statistics
 • `/credits` - Check balance
 • `/claim CODE` - Redeem gift code
+• `/invite` - Invite friends & earn credits
 • `/info` - This information
 • `/cancel` - Cancel mass check
 • `/help` - All commands
@@ -805,188 +1005,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-async def myinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /myinfo command - Shows user's personal info"""
-    if update.message:
-        user_id = update.effective_user.id
-        message = update.message
-    elif update.callback_query:
-        user_id = update.callback_query.from_user.id
-        message = update.callback_query.message
-    else:
-        return
-    
-    if not check_channel_membership(user_id):
-        await message.reply_text(
-            "❌ Please join our private channel first using /start",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-    
-    user = initialize_user(user_id)
-    
-    # Calculate today's date for resetting daily stats
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    last_check_date = user['last_check'][:10] if user['last_check'] else None
-    
-    # Reset daily stats if new day
-    if last_check_date != today:
-        user['checks_today'] = 0
-        user['approved_cards'] = 0
-        user['declined_cards'] = 0
-    
-    success_rate = (user.get('approved_cards', 0) / user['total_checks'] * 100) if user['total_checks'] > 0 else 0
-    
-    keyboard = [
-        [InlineKeyboardButton("⚡ Check Card", callback_data="quick_check")],
-        [InlineKeyboardButton("📊 Mass Check", callback_data="mass_check")],
-        [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_start")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await message.reply_text(
-        f"*👤 YOUR STATISTICS*\n"
-        f"══════════════════════\n"
-        f"*User ID:* `{user_id}`\n"
-        f"*Username:* @{user.get('username', 'N/A')}\n"
-        f"*Joined:* {user.get('joined_date', 'N/A')[:10]}\n\n"
-        f"*Credits:*\n"
-        f"• Available: {user['credits']}\n"
-        f"• Spent: {user.get('credits_spent', 0)}\n\n"
-        f"*Today's Activity:*\n"
-        f"• Checks: {user['checks_today']}\n"
-        f"• ✅ Approved: {user.get('approved_cards', 0)}\n"
-        f"• ❌ Declined: {user.get('declined_cards', 0)}\n\n"
-        f"*All Time Stats:*\n"
-        f"• Total Checks: {user['total_checks']}\n"
-        f"• Success Rate: {success_rate:.1f}%\n"
-        f"• Last Check: {user['last_check'][:19] if user['last_check'] else 'Never'}\n\n"
-        f"*Channel Status:* {'✅ Joined' if user.get('joined_channel', False) else '❌ Not Joined'}",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=reply_markup
-    )
-
-async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /botinfo command - Shows bot statistics (admin only)"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text(
-            "❌ This command is for administrators only.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-    
-    # Calculate bot uptime
-    start_time = datetime.datetime.fromisoformat(bot_statistics["start_time"])
-    uptime = datetime.datetime.now() - start_time
-    days = uptime.days
-    hours = uptime.seconds // 3600
-    minutes = (uptime.seconds % 3600) // 60
-    
-    # Calculate success rate
-    total_checks = bot_statistics["total_checks"]
-    success_rate = (bot_statistics["total_approved"] / total_checks * 100) if total_checks > 0 else 0
-    
-    # Calculate average credits per user
-    avg_credits = bot_statistics["total_credits_used"] / bot_statistics["total_users"] if bot_statistics["total_users"] > 0 else 0
-    
-    await update.message.reply_text(
-        f"*📊 BOT STATISTICS (ADMIN)*\n"
-        f"══════════════════════\n"
-        f"*Uptime:* {days}d {hours}h {minutes}m\n"
-        f"*Started:* {bot_statistics['start_time'][:19]}\n\n"
-        f"*User Statistics:*\n"
-        f"• Total Users: {bot_statistics['total_users']}\n"
-        f"• Active Today: {len([u for u in user_data.values() if u.get('checks_today', 0) > 0])}\n\n"
-        f"*Card Checking Stats:*\n"
-        f"• Total Checks: {total_checks}\n"
-        f"• ✅ Approved: {bot_statistics['total_approved']}\n"
-        f"• ❌ Declined: {bot_statistics['total_declined']}\n"
-        f"• Success Rate: {success_rate:.1f}%\n\n"
-        f"*Credit Statistics:*\n"
-        f"• Total Credits Used: {bot_statistics['total_credits_used']}\n"
-        f"• Avg Credits/User: {avg_credits:.1f}\n"
-        f"• Active Gift Codes: {len(gift_codes)}\n\n"
-        f"*System Status:*\n"
-        f"• Setup Cache: {'✅ Active' if 'nonce' in setup_intent_cache else '❌ Expired'}\n"
-        f"• Active Checks: {len(checking_tasks)}\n"
-        f"• Memory Usage: {len(user_data)} users",
-        parse_mode=ParseMode.MARKDOWN
-    )
-
-async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /userinfo command - Admin view user info"""
-    if update.message:
-        user_id = update.effective_user.id
-        message = update.message
-    else:
-        return
-    
-    if user_id not in ADMIN_IDS:
-        await message.reply_text(
-            "❌ This command is for administrators only.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-    
-    if not context.args:
-        await message.reply_text(
-            "*❌ Usage:* `/userinfo user_id`\n"
-            "*Example:* `/userinfo 123456789`",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-    
-    try:
-        target_user_id = int(context.args[0])
-        user = initialize_user(target_user_id)
-        
-        # Get claimed codes
-        claimed = user_claimed_codes.get(target_user_id, [])
-        
-        # Calculate success rate
-        total_user_checks = user.get('total_checks', 0)
-        approved_cards = user.get('approved_cards', 0)
-        success_rate = (approved_cards / total_user_checks * 100) if total_user_checks > 0 else 0
-        
-        user_info = f"""*👤 USER INFO (ADMIN)*
-══════════════════════
-*User ID:* `{target_user_id}`
-*Username:* @{user.get('username', 'N/A')}
-*Name:* {user.get('first_name', 'N/A')}
-*Joined:* {user.get('joined_date', 'N/A')[:10]}
-*Channel:* {'✅ Joined' if user.get('joined_channel', False) else '❌ Not Joined'}
-*Last Active:* {user.get('last_check', 'Never')[:19] if user.get('last_check') else 'Never'}
-
-*Credits:* {user.get('credits', 0)}
-*Credits Spent:* {user.get('credits_spent', 0)}
-
-*Statistics:*
-• Total Checks: {total_user_checks}
-• Today's Checks: {user.get('checks_today', 0)}
-• ✅ Approved: {approved_cards}
-• ❌ Declined: {user.get('declined_cards', 0)}
-• Success Rate: {success_rate:.1f}%
-
-*Claimed Codes:* {len(claimed)}
-══════════════════════
-"""
-        if claimed:
-            user_info += "\n*Claimed Gift Codes:*\n"
-            for code in claimed[:10]:
-                user_info += f"• `{code}`\n"
-            if len(claimed) > 10:
-                user_info += f"• ... and {len(claimed) - 10} more\n"
-        
-        await message.reply_text(user_info, parse_mode=ParseMode.MARKDOWN)
-        
-    except ValueError:
-        await message.reply_text("❌ Invalid user ID.")
-    except Exception as e:
-        logger.error(f"Error in userinfo_command: {e}")
-        await message.reply_text("❌ An error occurred while fetching user info.")
-
 async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /credits command"""
     if update.message:
@@ -995,18 +1013,22 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
     
-    if not check_channel_membership(user_id):
+    user = await get_user(user_id)
+    
+    if not user['joined_channel']:
         await message.reply_text(
             "❌ Please join our private channel first using /start",
             parse_mode=ParseMode.MARKDOWN
         )
         return
     
-    user = initialize_user(user_id)
+    # Get referral stats
+    referrals_count = user.get('referrals_count', 0)
+    earned_from_referrals = user.get('earned_from_referrals', 0)
     
     keyboard = [
-        [InlineKeyboardButton("🎁 Claim Gift Code", callback_data="claim_gift")],
-        [InlineKeyboardButton("📊 My Stats", callback_data="my_stats")],
+        [InlineKeyboardButton("🎁 Claim Gift Code", callback_data="claim_gift"),
+         InlineKeyboardButton("🤝 Invite & Earn", callback_data="invite")],
         [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1015,15 +1037,63 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*💰 YOUR CREDITS*\n"
         f"══════════════════════\n"
         f"*Available Credits:* {user['credits']}\n"
-        f"*Credits Spent:* {user.get('credits_spent', 0)}\n\n"
+        f"*Credits Spent:* {user.get('credits_spent', 0)}\n"
+        f"*Referrals:* {referrals_count} users (+{earned_from_referrals} credits earned)\n\n"
         f"*Credit Usage:*\n"
         f"• Single check: 1 credit (deducted for any check attempt)\n"
         f"• Mass check: 1 credit per card (deducted for all processed cards)\n\n"
         f"*Get More Credits:*\n"
-        f"1. Ask admin for credits\n"
+        f"1. Invite friends: +50 credits each\n"
         f"2. Claim gift codes with /claim\n"
-        f"3. Wait for promotions\n\n"
+        f"3. Ask admin for credits\n"
+        f"4. Wait for promotions\n\n"
         f"*Note:* Credits are deducted for ALL check attempts, approved or declined.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=reply_markup
+    )
+
+async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /invite command"""
+    if update.message:
+        user_id = update.effective_user.id
+        message = update.message
+    else:
+        return
+    
+    user = await get_user(user_id)
+    
+    if not user['joined_channel']:
+        await message.reply_text(
+            "❌ Please join our private channel first using /start",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Generate invite link
+    bot_username = (await context.bot.get_me()).username
+    invite_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    
+    keyboard = [
+        [InlineKeyboardButton("📋 Copy Link", callback_data="copy_invite")],
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_start")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await message.reply_text(
+        f"*🤝 INVITE & EARN*\n"
+        f"══════════════════════\n"
+        f"*Your Invite Link:*\n"
+        f"`{invite_link}`\n\n"
+        f"*How it works:*\n"
+        f"1. Share your invite link with friends\n"
+        f"2. When they join using your link:\n"
+        f"   • You get 50 credits\n"
+        f"   • They get 10 credits\n"
+        f"3. Earn unlimited credits!\n\n"
+        f"*Your Stats:*\n"
+        f"• Referrals: {user.get('referrals_count', 0)} users\n"
+        f"• Earned from Referrals: {user.get('earned_from_referrals', 0)} credits\n\n"
+        f"*Copy and share your link now!*",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=reply_markup
     )
@@ -1031,8 +1101,9 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /chk command for single card check - ULTRA FAST"""
     user_id = update.effective_user.id
+    user = await get_user(user_id)
     
-    if not check_channel_membership(user_id):
+    if not user['joined_channel']:
         await update.message.reply_text(
             "*❌ ACCESS DENIED*\n"
             "Please join our private channel first using /start",
@@ -1067,8 +1138,6 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    user = initialize_user(user_id)
-    
     # Check if user has credits
     if user["credits"] <= 0:
         await update.message.reply_text(
@@ -1076,6 +1145,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "══════════════════════\n"
             "You don't have enough credits to check cards.\n\n"
             "*Options:*\n"
+            "• Invite friends with /invite\n"
             "• Claim a gift code with /claim\n"
             "• Contact admin for credits\n\n"
             "*Your balance:* 0 credits",
@@ -1100,22 +1170,34 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     process_time = time.time() - start_time
     
     # Update user stats and ALWAYS deduct credit for ANY check attempt
-    user["credits"] -= 1
-    user["credits_spent"] = user.get("credits_spent", 0) + 1
-    user["checks_today"] += 1
-    user["total_checks"] += 1
-    user["last_check"] = datetime.datetime.now().isoformat()
-    
-    # Update bot statistics
-    bot_statistics["total_checks"] += 1
-    bot_statistics["total_credits_used"] += 1
+    updates = {
+        'credits': user["credits"] - 1,
+        'credits_spent': user.get("credits_spent", 0) + 1,
+        'checks_today': user.get("checks_today", 0) + 1,
+        'total_checks': user["total_checks"] + 1,
+        'last_check_date': datetime.datetime.now().date()
+    }
     
     if status == "approved":
-        user["approved_cards"] = user.get("approved_cards", 0) + 1
-        bot_statistics["total_approved"] += 1
+        updates['approved_cards'] = user.get("approved_cards", 0) + 1
     else:
-        user["declined_cards"] = user.get("declined_cards", 0) + 1
-        bot_statistics["total_declined"] += 1
+        updates['declined_cards'] = user.get("declined_cards", 0) + 1
+    
+    await update_user(user_id, updates)
+    
+    # Update bot statistics
+    await update_bot_stats({
+        'total_checks': 1,
+        'total_credits_used': 1
+    })
+    
+    if status == "approved":
+        await update_bot_stats({'total_approved': 1})
+    else:
+        await update_bot_stats({'total_declined': 1})
+    
+    # Refresh user data
+    user = await get_user(user_id)
     
     # Prepare user stats for display
     user_stats = {
@@ -1138,8 +1220,9 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /mchk command for mass check"""
     user_id = update.effective_user.id
+    user = await get_user(user_id)
     
-    if not check_channel_membership(user_id):
+    if not user['joined_channel']:
         await update.message.reply_text(
             "❌ Please join our private channel first using /start",
             parse_mode=ParseMode.MARKDOWN
@@ -1198,8 +1281,6 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No valid cards found in file.")
         return
     
-    user = initialize_user(user_id)
-    
     # Check if user has enough credits
     if user["credits"] < len(valid_cards):
         await update.message.reply_text(
@@ -1239,8 +1320,9 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /claim command for gift codes"""
     user_id = update.effective_user.id
+    user = await get_user(user_id)
     
-    if not check_channel_membership(user_id):
+    if not user['joined_channel']:
         await update.message.reply_text(
             "❌ Please join our private channel first using /start",
             parse_mode=ParseMode.MARKDOWN
@@ -1259,7 +1341,8 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = context.args[0].upper().strip()
     
     # Check if code exists
-    if code not in gift_codes:
+    gift_code = await get_gift_code(code)
+    if not gift_code:
         await update.message.reply_text(
             f"*❌ INVALID GIFT CODE*\n\n"
             f"Code `{code}` not found or expired.\n"
@@ -1269,7 +1352,13 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Check if user already claimed this code
-    if user_id in user_claimed_codes and code in user_claimed_codes[user_id]:
+    async with db_pool.acquire() as conn:
+        claimed = await conn.fetchrow(
+            'SELECT * FROM user_claimed_codes WHERE user_id = $1 AND code = $2',
+            user_id, code
+        )
+    
+    if claimed:
         await update.message.reply_text(
             f"*❌ ALREADY CLAIMED*\n\n"
             f"You have already claimed gift code `{code}`.\n"
@@ -1278,11 +1367,8 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Get gift code details
-    gift_info = gift_codes[code]
-    
     # Check max uses
-    if gift_info.get("max_uses") and gift_info["uses"] >= gift_info["max_uses"]:
+    if gift_code['max_uses'] and gift_code['uses'] >= gift_code['max_uses']:
         await update.message.reply_text(
             f"*❌ CODE LIMIT REACHED*\n\n"
             f"Code `{code}` has been claimed too many times.",
@@ -1291,18 +1377,14 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Add credits to user
-    user = initialize_user(user_id)
-    credits_to_add = gift_info["credits"]
-    user["credits"] += credits_to_add
+    credits_to_add = gift_code['credits']
+    await update_user(user_id, {'credits': user['credits'] + credits_to_add})
     
     # Update gift code usage
-    gift_info["uses"] += 1
-    gift_info["claimed_by"].append(user_id)
+    await update_gift_code_usage(code, user_id)
     
-    # Track user's claimed codes
-    if user_id not in user_claimed_codes:
-        user_claimed_codes[user_id] = []
-    user_claimed_codes[user_id].append(code)
+    # Refresh user data
+    user = await get_user(user_id)
     
     await update.message.reply_text(
         f"*🎉 GIFT CODE CLAIMED!*\n"
@@ -1340,8 +1422,9 @@ async def addcr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Amount must be positive.")
             return
         
-        user = initialize_user(target_user_id)
-        user["credits"] += amount
+        user = await get_user(target_user_id)
+        await update_user(target_user_id, {'credits': user['credits'] + amount})
+        user = await get_user(target_user_id)  # Refresh
         
         await update.message.reply_text(
             f"*✅ CREDITS ADDED*\n"
@@ -1394,18 +1477,13 @@ async def gengift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Generate unique code
         code = generate_gift_code()
-        while code in gift_codes:
+        gift_code = await get_gift_code(code)
+        while gift_code:
             code = generate_gift_code()
+            gift_code = await get_gift_code(code)
         
         # Create gift code
-        gift_codes[code] = {
-            "credits": credits,
-            "max_uses": max_uses,
-            "uses": 0,
-            "created_at": datetime.datetime.now().isoformat(),
-            "created_by": user_id,
-            "claimed_by": []
-        }
+        await create_gift_code(code, credits, max_uses, user_id)
         
         await update.message.reply_text(
             f"*🎁 GIFT CODE GENERATED*\n"
@@ -1430,15 +1508,17 @@ async def listgifts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Admin only command.")
         return
     
+    gift_codes = await get_all_gift_codes()
+    
     if not gift_codes:
         await update.message.reply_text("📭 No gift codes generated yet.")
         return
     
     response = "*🎁 ACTIVE GIFT CODES*\n══════════════════════\n"
     
-    for code, info in list(gift_codes.items())[:20]:
-        uses_left = info['max_uses'] - info['uses']
-        response += f"• `{code}` - {info['credits']} credits ({uses_left}/{info['max_uses']} left)\n"
+    for gift in list(gift_codes)[:20]:
+        uses_left = gift['max_uses'] - gift['uses'] if gift['max_uses'] else 'Unlimited'
+        response += f"• `{gift['code']}` - {gift['credits']} credits ({gift['uses']}/{uses_left} used)\n"
     
     if len(gift_codes) > 20:
         response += f"\n... and {len(gift_codes) - 20} more codes"
@@ -1487,13 +1567,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Get user data
-    user = initialize_user(user_id)
+    user = await get_user(user_id)
     
     # Different help for admin vs regular users
     if user_id in ADMIN_IDS:
-        help_text = f"""*{BOT_INFO['name']}*
+        help_text = f"""*{escape_markdown(BOT_INFO['name'])}*
 ══════════════════════
-👋 *Welcome, {user_name}!*
+👋 *Welcome, {escape_markdown(user_name)}!*
 
 *Account Overview:*
 • Credits: *{user['credits']}*
@@ -1503,9 +1583,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 *User Commands:*
 • `/chk cc|mm|yy|cvv` - Check single card
 • `/mchk` - Upload file for mass check
-• `/myinfo` - Your statistics
 • `/credits` - Check balance
 • `/claim CODE` - Redeem gift code
+• `/invite` - Invite friends & earn credits
 • `/info` - Bot information
 • `/cancel` - Cancel mass check
 • `/help` - This help
@@ -1521,9 +1601,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ══════════════════════
 """
     else:
-        help_text = f"""*{BOT_INFO['name']}*
+        help_text = f"""*{escape_markdown(BOT_INFO['name'])}*
 ══════════════════════
-👋 *Welcome, {user_name}!*
+👋 *Welcome, {escape_markdown(user_name)}!*
 
 *Account Overview:*
 • Credits: *{user['credits']}*
@@ -1533,9 +1613,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 *User Commands:*
 • `/chk cc|mm|yy|cvv` - Check single card
 • `/mchk` - Upload file for mass check
-• `/myinfo` - Your statistics
 • `/credits` - Check balance
 • `/claim CODE` - Redeem gift code
+• `/invite` - Invite friends & earn credits
 • `/info` - Bot information
 • `/cancel` - Cancel mass check
 • `/help` - This help
@@ -1560,12 +1640,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     except Exception as e:
         logger.error(f"Error in help command: {e}")
-        # Fallback to plain text
-        plain_text = help_text.replace('*', '')
+        # Fallback to plain text without markdown
         if update.message:
-            await update.message.reply_text(plain_text)
+            await update.message.reply_text(
+                help_text.replace('*', '').replace('`', '').replace('_', ''),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
+            )
         elif update.callback_query:
-            await update.callback_query.edit_message_text(plain_text)
+            await update.callback_query.edit_message_text(
+                help_text.replace('*', '').replace('`', '').replace('_', ''),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
+            )
 
 async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle verify join callback"""
@@ -1577,7 +1662,7 @@ async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         pass
     
     user_id = query.from_user.id
-    user_data[user_id]["joined_channel"] = True
+    await update_user(user_id, {'joined_channel': True})
     
     await query.edit_message_text(
         "*✅ ACCESS GRANTED*\n"
@@ -1609,6 +1694,155 @@ async def claim_gift_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode=ParseMode.MARKDOWN
     )
 
+async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /userinfo command - Admin view user info"""
+    if update.message:
+        user_id = update.effective_user.id
+        message = update.message
+    else:
+        return
+    
+    if user_id not in ADMIN_IDS:
+        await message.reply_text(
+            "❌ This command is for administrators only.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    if not context.args:
+        await message.reply_text(
+            "*❌ Usage:* `/userinfo user_id`\n"
+            "*Example:* `/userinfo 123456789`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        user = await get_user(target_user_id)
+        
+        # Get claimed codes
+        async with db_pool.acquire() as conn:
+            claimed = await conn.fetch(
+                'SELECT code FROM user_claimed_codes WHERE user_id = $1',
+                target_user_id
+            )
+        
+        # Calculate success rate
+        total_user_checks = user.get('total_checks', 0)
+        approved_cards = user.get('approved_cards', 0)
+        success_rate = (approved_cards / total_user_checks * 100) if total_user_checks > 0 else 0
+        
+        # Get referrer info if exists
+        referrer_info = ""
+        if user.get('referrer_id'):
+            referrer = await get_user(user['referrer_id'])
+            referrer_info = f"\n*Referred by:* @{referrer.get('username', 'N/A')} ({user['referrer_id']})"
+        
+        user_info = f"""*👤 USER INFO (ADMIN)*
+══════════════════════
+*User ID:* `{target_user_id}`
+*Username:* @{user.get('username', 'N/A')}
+*Name:* {user.get('first_name', 'N/A')}
+*Joined:* {user.get('joined_date', 'N/A')[:10]}
+*Channel:* {'✅ Joined' if user.get('joined_channel', False) else '❌ Not Joined'}
+*Last Active:* {user.get('last_active', 'Never')[:19] if user.get('last_active') else 'Never'}
+{referrer_info}
+
+*Credits:* {user.get('credits', 0)}
+*Credits Spent:* {user.get('credits_spent', 0)}
+
+*Statistics:*
+• Total Checks: {total_user_checks}
+• Today's Checks: {user.get('checks_today', 0)}
+• ✅ Approved: {approved_cards}
+• ❌ Declined: {user.get('declined_cards', 0)}
+• Success Rate: {success_rate:.1f}%
+
+*Referrals:* {user.get('referrals_count', 0)} users
+*Earned from Referrals:* {user.get('earned_from_referrals', 0)} credits
+
+*Claimed Codes:* {len(claimed)}
+══════════════════════
+"""
+        if claimed:
+            user_info += "\n*Claimed Gift Codes:*\n"
+            for code in claimed[:10]:
+                user_info += f"• `{code['code']}`\n"
+            if len(claimed) > 10:
+                user_info += f"• ... and {len(claimed) - 10} more\n"
+        
+        await message.reply_text(user_info, parse_mode=ParseMode.MARKDOWN)
+        
+    except ValueError:
+        await message.reply_text("❌ Invalid user ID.")
+    except Exception as e:
+        logger.error(f"Error in userinfo_command: {e}")
+        await message.reply_text("❌ An error occurred while fetching user info.")
+
+async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /botinfo command - Shows bot statistics (admin only)"""
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "❌ This command is for administrators only.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    stats = await get_bot_stats()
+    
+    # Calculate bot uptime
+    start_time = stats["start_time"]
+    if isinstance(start_time, str):
+        start_time = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+    uptime = datetime.datetime.now() - start_time
+    days = uptime.days
+    hours = uptime.seconds // 3600
+    minutes = (uptime.seconds % 3600) // 60
+    
+    # Calculate success rate
+    total_checks = stats["total_checks"]
+    success_rate = (stats["total_approved"] / total_checks * 100) if total_checks > 0 else 0
+    
+    # Calculate average credits per user
+    avg_credits = stats["total_credits_used"] / stats["total_users"] if stats["total_users"] > 0 else 0
+    
+    # Get active users count
+    async with db_pool.acquire() as conn:
+        active_users = await conn.fetchval('''
+            SELECT COUNT(*) FROM users 
+            WHERE last_active > NOW() - INTERVAL '1 day'
+        ''')
+        
+        # Get total gift codes
+        total_gift_codes = await conn.fetchval('SELECT COUNT(*) FROM gift_codes')
+    
+    await update.message.reply_text(
+        f"*📊 BOT STATISTICS (ADMIN)*\n"
+        f"══════════════════════\n"
+        f"*Uptime:* {days}d {hours}h {minutes}m\n"
+        f"*Started:* {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"*User Statistics:*\n"
+        f"• Total Users: {stats['total_users']}\n"
+        f"• Active Today: {active_users}\n\n"
+        f"*Card Checking Stats:*\n"
+        f"• Total Checks: {total_checks}\n"
+        f"• ✅ Approved: {stats['total_approved']}\n"
+        f"• ❌ Declined: {stats['total_declined']}\n"
+        f"• Success Rate: {success_rate:.1f}%\n\n"
+        f"*Credit Statistics:*\n"
+        f"• Total Credits Used: {stats['total_credits_used']}\n"
+        f"• Avg Credits/User: {avg_credits:.1f}\n"
+        f"• Active Gift Codes: {total_gift_codes}\n\n"
+        f"*System Status:*\n"
+        f"• Setup Cache: {'✅ Active' if 'nonce' in setup_intent_cache else '❌ Expired'}\n"
+        f"• Active Checks: {len(checking_tasks)}\n"
+        f"• Database: ✅ Connected",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
 # ==================== MASS CHECK FUNCTIONS ====================
 
 async def start_mass_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1627,7 +1861,7 @@ async def start_mass_check_callback(update: Update, context: ContextTypes.DEFAUL
         return
     
     cards = files_storage[user_id]["cards"]
-    user = initialize_user(user_id)
+    user = await get_user(user_id)
     
     # Check if user has enough credits
     if user["credits"] < len(cards):
@@ -1684,7 +1918,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
     processed = 0
     approved = 0
     declined = 0
-    user = initialize_user(user_id)
+    user = await get_user(user_id)
     
     # Calculate initial credits
     initial_credits = user["credits"]
@@ -1770,18 +2004,27 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
     success_rate = (approved / len(cards) * 100) if cards else 0
     
     # Update user data
-    user["credits"] = initial_credits - processed
-    user["credits_spent"] = user.get("credits_spent", 0) + processed
-    user["checks_today"] += processed
-    user["total_checks"] += processed
-    user["approved_cards"] = user.get("approved_cards", 0) + approved
-    user["declined_cards"] = user.get("declined_cards", 0) + declined
+    updates = {
+        'credits': initial_credits - processed,
+        'credits_spent': user.get("credits_spent", 0) + processed,
+        'checks_today': user.get("checks_today", 0) + processed,
+        'total_checks': user["total_checks"] + processed,
+        'approved_cards': user.get("approved_cards", 0) + approved,
+        'declined_cards': user.get("declined_cards", 0) + declined,
+        'last_check_date': datetime.datetime.now().date()
+    }
+    await update_user(user_id, updates)
     
     # Update bot statistics
-    bot_statistics["total_checks"] += processed
-    bot_statistics["total_credits_used"] += processed
-    bot_statistics["total_approved"] += approved
-    bot_statistics["total_declined"] += declined
+    await update_bot_stats({
+        'total_checks': processed,
+        'total_credits_used': processed,
+        'total_approved': approved,
+        'total_declined': declined
+    })
+    
+    # Refresh user data
+    user = await get_user(user_id)
     
     # Send summary
     summary_text = f"""*🎯 MASS CHECK COMPLETE*
@@ -1835,22 +2078,31 @@ async def cancel_check_callback(update: Update, context: ContextTypes.DEFAULT_TY
             approved = checking_tasks[user_id].get("approved", 0)
             declined = checking_tasks[user_id].get("declined", 0)
             
-            user = initialize_user(user_id)
+            user = await get_user(user_id)
             used_credits = processed
             
             # Update user credits
-            user["credits"] -= used_credits
-            user["credits_spent"] = user.get("credits_spent", 0) + used_credits
-            user["checks_today"] += processed
-            user["total_checks"] += processed
-            user["approved_cards"] = user.get("approved_cards", 0) + approved
-            user["declined_cards"] = user.get("declined_cards", 0) + declined
+            updates = {
+                'credits': user["credits"] - used_credits,
+                'credits_spent': user.get("credits_spent", 0) + used_credits,
+                'checks_today': user.get("checks_today", 0) + processed,
+                'total_checks': user["total_checks"] + processed,
+                'approved_cards': user.get("approved_cards", 0) + approved,
+                'declined_cards': user.get("declined_cards", 0) + declined,
+                'last_check_date': datetime.datetime.now().date()
+            }
+            await update_user(user_id, updates)
             
             # Update bot statistics
-            bot_statistics["total_checks"] += processed
-            bot_statistics["total_credits_used"] += processed
-            bot_statistics["total_approved"] += approved
-            bot_statistics["total_declined"] += declined
+            await update_bot_stats({
+                'total_checks': processed,
+                'total_credits_used': processed,
+                'total_approved': approved,
+                'total_declined': declined
+            })
+            
+            # Refresh user data
+            user = await get_user(user_id)
             
             await query.edit_message_text(
                 f"*🛑 CHECK CANCELLED*\n"
@@ -1939,6 +2191,10 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot"""
+    # Initialize database before starting bot
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(init_database())
+    
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Add error handler
@@ -1948,8 +2204,8 @@ def main():
     # Public commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("info", info_command))
-    application.add_handler(CommandHandler("myinfo", myinfo_command))
     application.add_handler(CommandHandler("credits", credits_command))
+    application.add_handler(CommandHandler("invite", invite_command))
     application.add_handler(CommandHandler("chk", chk_command))
     application.add_handler(CommandHandler("mchk", mchk_command))
     application.add_handler(CommandHandler("claim", claim_command))
@@ -1972,7 +2228,8 @@ def main():
     application.add_handler(CallbackQueryHandler(quick_check_callback, pattern="^quick_check$"))
     application.add_handler(CallbackQueryHandler(mass_check_callback, pattern="^mass_check$"))
     application.add_handler(CallbackQueryHandler(my_credits_callback, pattern="^my_credits$"))
-    application.add_handler(CallbackQueryHandler(my_stats_callback, pattern="^my_stats$"))
+    application.add_handler(CallbackQueryHandler(invite_callback, pattern="^invite$"))
+    application.add_handler(CallbackQueryHandler(copy_invite_callback, pattern="^copy_invite$"))
     application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(claim_gift_callback, pattern="^claim_gift$"))
     application.add_handler(CallbackQueryHandler(start_mass_check_callback, pattern="^start_mass_"))
@@ -1994,7 +2251,8 @@ def main():
     print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
     print(f"⚡ Speed: 5 cards/second")
     print(f"📍 Address Rotation: Enabled (US, UK, CA, IN, AU)")
-    print(f"📊 Statistics Tracking: Enabled")
+    print(f"🤝 Invite & Earn: 50 credits per referral")
+    print(f"📊 Database: ✅ Connected")
     print(f"🔐 Admin Commands: {len(ADMIN_IDS)} admin(s)")
     print("✅ Bot is running...")
     

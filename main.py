@@ -7,28 +7,11 @@ import os
 import re
 import aiohttp
 import string
-import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    MessageHandler, 
-    CallbackQueryHandler, 
-    ContextTypes,
-    filters
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 from telegram.error import NetworkError, BadRequest, TimedOut
-
-# ==================== CONFIGURATION ====================
-# Use environment variables for Render
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8589155979:AAEMu9RnHZ71AE9AJ15b7WfasGj2EB5My-8")
-ADMIN_IDS = [8079395886]  # Add your Telegram ID
-CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/+zsK6NPGgvSc4NzM1")
-
-# Stripe configuration
-DOMAIN = os.environ.get("DOMAIN", "https://dainte.com")
-PK = os.environ.get("STRIPE_PK", "pk_live_51F0CDkINGBagf8ROVbhXA43bHPn9cGEHEO55TN2mfNGYsbv2DAPuv6K0LoVywNJKNuzFZ4xGw94nVElyYg1Aniaf00QDrdzPhf")
+import logging
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +19,15 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Bot configuration
+BOT_TOKEN = "8589155979:AAEMu9RnHZ71AE9AJ15b7WfasGj2EB5My-8"
+ADMIN_IDS = [8079395886]  # Your Telegram ID
+CHANNEL_LINK = "https://t.me/+zsK6NPGgvSc4NzM1"  # Your private channel link
+
+# Stripe configuration
+DOMAIN = "https://dainte.com"
+PK = "pk_live_51F0CDkINGBagf8ROVbhXA43bHPn9cGEHEO55TN2mfNGYsbv2DAPuv6K0LoVywNJKNuzFZ4xGw94nVElyYg1Aniaf00QDrdzPhf"
 
 # In-memory storage (will be replaced with database later)
 user_data = {}
@@ -653,7 +645,7 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
 
 # ==================== COMMAND HANDLERS ====================
 
-async def start_command(update: Update, context: ContextTypes):
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     # Determine if this is from message or callback
     if update.message:
@@ -1945,14 +1937,8 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
-async def main():
+def main():
     """Start the bot"""
-    # Check if token exists
-    if not BOT_TOKEN:
-        logger.error("❌ BOT_TOKEN not found! Set it in environment variables.")
-        return
-    
-    # Create application
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Add error handler
@@ -2001,18 +1987,18 @@ async def main():
     application.add_handler(CallbackQueryHandler(admin_botinfo_callback, pattern="^admin_botinfo$"))
     
     # ========== UNKNOWN COMMAND HANDLER ==========
+    # Must be added LAST to catch all other commands
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     
     # Start bot
     print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
-    print(f"📡 Starting bot with token: {BOT_TOKEN[:10]}...")
     print(f"⚡ Speed: 5 cards/second")
+    print(f"📍 Address Rotation: Enabled (US, UK, CA, IN, AU)")
     print(f"📊 Statistics Tracking: Enabled")
     print(f"🔐 Admin Commands: {len(ADMIN_IDS)} admin(s)")
     print("✅ Bot is running...")
     
-    # Run the bot
-    await application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

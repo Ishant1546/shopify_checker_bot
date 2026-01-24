@@ -1,28 +1,55 @@
-import os
+import asyncio
 import json
+import random
+import datetime
+import time
+import os
 from dotenv import load_dotenv
+import re
+import sys
+import aiohttp
+import string
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.constants import ParseMode
+from telegram.error import NetworkError, BadRequest, TimedOut
+import logging  # ADD THIS IMPORT
+from telegram.helpers import escape_markdown
+import asyncpg
+# Simple Firebase setup
+import firebase_admin
+from firebase_admin import credentials, firestore  # ADD 'credentials' HERE
+import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
 load_dotenv()
 
 def init_firebase():
-    """Initialize Firebase using JSON string from environment"""
+    """Initialize Firebase and return connection status"""
     try:
-        # Get Firebase credentials JSON string from environment
-        firebase_creds_json = os.getenv("FIREBASE_CREDS")
+        # Load Firebase credentials from environment variables
+        firebase_config = {
+            "type": os.getenv("FIREBASE_TYPE", "service_account"),
+            "project_id": os.getenv("FIREBASE_PROJECT_ID"),
+            "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
+            "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace('\\n', '\n'),
+            "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
+            "client_id": os.getenv("FIREBASE_CLIENT_ID"),
+            "auth_uri": os.getenv("FIREBASE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth"),
+            "token_uri": os.getenv("FIREBASE_TOKEN_URI", "https://oauth2.googleapis.com/token"),
+            "auth_provider_x509_cert_url": os.getenv("FIREBASE_AUTH_PROVIDER_CERT_URL", "https://www.googleapis.com/oauth2/v1/certs"),
+            "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL")
+        }
         
-        if not firebase_creds_json:
-            print("⚠️  FIREBASE_CREDS not found in environment")
-            return None, False
-        
-        # Parse JSON string
-        firebase_config = json.loads(firebase_creds_json)
-        
-        # Replace escaped newlines in private key
-        if 'private_key' in firebase_config:
-            firebase_config['private_key'] = firebase_config['private_key'].replace('\\n', '\n')
+        # Validate required fields
+        required_fields = ["project_id", "private_key", "client_email"]
+        for field in required_fields:
+            if not firebase_config.get(field):
+                raise ValueError(f"Missing required Firebase config: {field}")
         
         # Initialize Firebase
-        cred = credentials.Certificate(firebase_config)
+        cred = credentials.Certificate(firebase_config)  # 'credentials' is now imported
         firebase_admin.initialize_app(cred)
         db = firestore.client()
         print("✅ Firebase connected successfully")
@@ -33,13 +60,10 @@ def init_firebase():
         print("✅ Firebase write test successful")
         
         return db, True
-    except json.JSONDecodeError as e:
-        print(f"⚠️  Failed to parse Firebase credentials JSON: {e}")
     except Exception as e:
         print(f"⚠️  Firebase connection failed: {e}")
-    
-    print("⚠️  Using in-memory storage (data will be lost on restart)")
-    return None, False
+        print("⚠️  Using in-memory storage (data will be lost on restart)")
+        return None, False
 
 # Initialize Firebase
 db, firebase_connected = init_firebase()
@@ -58,7 +82,7 @@ def escape_markdown_v2(text):
         text = text.replace(char, f'\\{char}')
     return text
 
-# Configure logging
+# Configure logging - THIS SHOULD NOW WORK
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO

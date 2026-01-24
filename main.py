@@ -1,34 +1,28 @@
-import asyncio
-import json
-import random
-import datetime
-import time
 import os
+import json
 from dotenv import load_dotenv
-import re
-import sys
-import aiohttp
-import string
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from telegram.constants import ParseMode
-from telegram.error import NetworkError, BadRequest, TimedOut
-import logging
-from telegram.helpers import escape_markdown
-import asyncpg
-# Simple Firebase setup
-import firebase_admin
-from firebase_admin import credentials, firestore
-import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
 
 load_dotenv()
 
 def init_firebase():
-    """Initialize Firebase and return connection status"""
+    """Initialize Firebase using JSON string from environment"""
     try:
-        cred = credentials.Certificate("firebase-creds.json")
+        # Get Firebase credentials JSON string from environment
+        firebase_creds_json = os.getenv("FIREBASE_CREDS")
+        
+        if not firebase_creds_json:
+            print("⚠️  FIREBASE_CREDS not found in environment")
+            return None, False
+        
+        # Parse JSON string
+        firebase_config = json.loads(firebase_creds_json)
+        
+        # Replace escaped newlines in private key
+        if 'private_key' in firebase_config:
+            firebase_config['private_key'] = firebase_config['private_key'].replace('\\n', '\n')
+        
+        # Initialize Firebase
+        cred = credentials.Certificate(firebase_config)
         firebase_admin.initialize_app(cred)
         db = firestore.client()
         print("✅ Firebase connected successfully")
@@ -39,10 +33,13 @@ def init_firebase():
         print("✅ Firebase write test successful")
         
         return db, True
+    except json.JSONDecodeError as e:
+        print(f"⚠️  Failed to parse Firebase credentials JSON: {e}")
     except Exception as e:
         print(f"⚠️  Firebase connection failed: {e}")
-        print("⚠️  Using in-memory storage (data will be lost on restart)")
-        return None, False
+    
+    print("⚠️  Using in-memory storage (data will be lost on restart)")
+    return None, False
 
 # Initialize Firebase
 db, firebase_connected = init_firebase()

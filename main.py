@@ -108,6 +108,12 @@ BOT_INFO = {
     "features": "• Fast Single Check\n• Mass Checks\n• Real-time Statistics\n• Invite & Earn System"
 }
 
+# In-memory cache for checking tasks (temporary storage)
+checking_tasks = {}
+files_storage = {}  # Add this line
+setup_intent_cache = {}
+last_cache_time = 0
+
 # User-Agent rotation list
 USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
@@ -1544,7 +1550,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Refresh user data
     user = await get_user(user_id)
     
-    # Format result using universal format
+        # Format result using universal format
     result_text = format_universal_result(
         card_data=result_card,
         status=status,
@@ -1560,6 +1566,103 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Update message with result
     await processing_msg.edit_text(result_text, parse_mode=ParseMode.HTML)
+
+async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /mchk command for mass check"""
+    user_id = update.effective_user.id
+    user = await get_user(user_id)
+    
+    if not user['joined_channel']:
+        await update.message.reply_text(
+            "❌ Please join our private channel first using /start",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Check if user has uploaded a file
+    if user_id not in files_storage:
+        await update.message.reply_text(
+            "*📊 MASS CHECK SYSTEM*\n"
+            "══════════════════════\n"
+            "To Start A Mass Check:\n"
+            "1. Upload a .txt File With Cards\n"
+            "2. Use `/mchk` Command\n\n"
+            "*Format In File:*\n"
+            "`cc|mm|yy|cvv`\n"
+            "`cc|mm|yy|cvv`\n"
+            "...\n\n"
+            "*Features:*\n"
+            "• Approved Cards Are Shown\n"
+            "• Declined Cards Are Not Shown\n"
+            "• Cancel Anytime With /cancel\n"
+            "• Credits Deducted Per Card\n\n",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Get file info
+    file_info = files_storage[user_id]
+    
+    # Download file
+    try:
+        file = await context.bot.get_file(file_info["file_id"])
+        file_content = await file.download_as_bytearray()
+        cards_text = file_content.decode('utf-8')
+        cards = [line.strip() for line in cards_text.split('\n') if line.strip()]
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error reading file: {str(e)[:50]}")
+        return
+    
+    if len(cards) == 0:
+        await update.message.reply_text("❌ No cards found in file.")
+        return
+    
+    # Validate cards format
+    valid_cards = []
+    invalid_cards = []
+    
+    for card in cards:
+        parts = card.split("|")
+        if len(parts) == 4:
+            valid_cards.append(card)
+        else:
+            invalid_cards.append(card)
+    
+    if len(valid_cards) == 0:
+        await update.message.reply_text("❌ No valid cards found in file.")
+        return
+    
+    # Check if user has enough credits
+    if user["credits"] < len(valid_cards):
+        await update.message.reply_text(
+            f"*💰 INSUFFICIENT CREDITS*\n"
+            f"══════════════════════\n"
+            f"*Cards To Check:* {len(valid_cards)}\n"
+            f"*Credits Needed:* {len(valid_cards)}\n"
+            f"*Your Credits:* {user['credits']}\n\n"
+            f"You Need {len(valid_cards) - user['credits']} More Credits.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Show confirmation
+    await update.message.reply_text(
+        f"*📊 MASS CHECK READY*\n"
+        f"══════════════════════\n"
+        f"*Valid Cards:* {len(valid_cards)}\n"
+        f"*Invalid Cards:* {len(invalid_cards)}\n"
+        f"*Your Credits:* {user['credits']}\n\n"
+        f"To Start, Click The Button Below:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚀 START CHECKING", callback_data=f"start_mass_{len(valid_cards)}")],
+            [InlineKeyboardButton("❌ CANCEL", callback_data="cancel_mass")]
+        ])
+    )
+    
+    # Store valid cards
+    files_storage[user_id]["cards"] = valid_cards
+    files_storage[user_id]["invalid_cards"] = invalid_cards
 
 async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context):
     """ULTRA-FAST mass checking with universal format"""

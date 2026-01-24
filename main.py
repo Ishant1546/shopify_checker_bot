@@ -79,10 +79,10 @@ PK = "pk_live_51F0CDkINGBagf8ROVbhXA43bHPn9cGEHEO55TN2mfNGYsbv2DAPuv6K0LoVywNJKN
 # Bot info
 BOT_INFO = {
     "name": "⚡ DARKXCODE STRIPE CHECKER ⚡",
-    "version": "v4.0",
-    "creator": "@DarkXCode",
-    "gates": "Stripe (dainte.com)",
-    "features": "• Ultra-Fast Single Check\n• Mass Check with Live Results\n• Gift Code System\n• Advanced Admin Panel\n• Real-time Statistics\n• Invite & Earn System"
+    "version": "1.0",
+    "creator": "@ISHANT_OFFICIAL",
+    "gates": "Stripe",
+    "features": "• Fast Single Check\n• Mass Checks\n• Real-time Statistics\n• Invite & Earn System"
 }
 
 # User-Agent rotation list
@@ -669,9 +669,7 @@ async def quick_check_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         "<code>/chk 4111111111111111|12|2025|123</code>\n\n"
         "<b>Features:</b>\n"
         "• ⚡ Instant results\n"
-        "• Cost: 1 credit\n"
-        "• Speed: Instant\n\n"
-        "<b>Try it now!</b>",
+        "• Cost: 1 credit\n",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
     )
@@ -791,14 +789,11 @@ async def my_credits_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"*Available Credits:* {user['credits']}\n"
         f"*Credits Spent:* {user.get('credits_spent', 0)}\n\n"
         f"*Credit Usage:*\n"
-        f"• Single check: 1 credit\n"
-        f"• Mass check: 1 credit per card\n\n"
+        f"\n"
         f"*Get More Credits:*\n"
-        f"1. Ask admin for credits\n"
-        f"2. Claim gift codes with /claim\n"
-        f"3. Invite friends and earn 50 credits each\n"
-        f"4. Wait for promotions\n\n"
-        f"*Note:* Credits are deducted for all check attempts.",
+        f"1. Ask Admin For Credits\n"
+        f"2. Claim Fift Codes\n"
+        f"3. Invite Friends\n",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
     )
@@ -824,16 +819,16 @@ async def invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"══════════════════════\n"
         f"*Your Invite Link:*\n"
         f"`{invite_link}`\n\n"
-        f"*How it works:*\n"
-        f"1. Share your invite link with friends\n"
-        f"2. When they join using your link:\n"
-        f"   • You get 50 credits\n"
-        f"   • They get 10 credits\n"
-        f"3. Earn unlimited credits!\n\n"
+        f"*How It Works:*\n"
+        f"1. Share Your Invite Link With Friends\n"
+        f"2. When They Join Using Your Link:\n"
+        f"   • You Get 100 Credits\n"
+        f"   • They Get 20 Credits\n"
+        f"3. Earn Unlimited Credits!\n\n"
         f"*Your Stats:*\n"
-        f"• Referrals: {user.get('referrals_count', 0)} users\n"
-        f"• Earned from Referrals: {user.get('earned_from_referrals', 0)} credits\n\n"
-        f"*Copy and share your link now!*",
+        f"• Referrals: {user.get('referrals_count', 0)} Users\n"
+        f"• Earned From Referrals: {user.get('earned_from_referrals', 0)} Credits\n\n"
+        f"*Copy And Share Your Link Now!*",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📋 Copy Link", callback_data="copy_invite")],
@@ -846,7 +841,7 @@ async def copy_invite_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     
     try:
-        await query.answer("Invite link copied to your message input!")
+        await query.answer("Invite Link Copied To Your Message Input!")
     except BadRequest:
         pass
     
@@ -858,9 +853,9 @@ async def copy_invite_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text(
         f"*📋 INVITE LINK*\n"
         f"══════════════════════\n"
-        f"Copy this link and share with friends:\n\n"
+        f"Copy This Link And Share With Friends:\n\n"
         f"`{invite_link}`\n\n"
-        f"*Already copied to your message input!*",
+        f"*Already Copied To Your Message Input!*",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="invite")]])
     )
@@ -1046,19 +1041,18 @@ async def mass_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(
         "*📊 MASS CHECK SYSTEM*\n"
         "══════════════════════\n"
-        "To start a mass check:\n"
-        "1. Upload a .txt file with cards\n"
-        "2. Use `/mchk` command\n\n"
-        "*Format in file:*\n"
+        "To Start A Mass Check:\n"
+        "1. Upload a .txt File With Cards\n"
+        "2. Use `/mchk` Command\n\n"
+        "*Format In File:*\n"
         "`cc|mm|yy|cvv`\n"
         "`cc|mm|yy|cvv`\n"
         "...\n\n"
         "*Features:*\n"
-        "• ⚡ 5 cards/second speed\n"
-        "• Live real-time results\n"
-        "• Cancel anytime with /cancel\n"
-        "• Credits deducted per card\n\n"
-        "*Try it now!* Upload a .txt file and use `/mchk`",
+        "• Approved Cards Are Shown\n"
+        "• Declined Cards Are Not Shown\n"
+        "• Cancel Anytime With /cancel\n"
+        "• Credits Deducted Per Card\n\n",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
     )
@@ -1067,9 +1061,9 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
     """Format card checking result with advanced styling"""
     try:
         cc, mon, year, cvv = card.split("|")
-        masked_card = f"{cc[:6]}******{cc[-4:]}"
+        masked_card = f"{cc[:16]}"
     except:
-        return f"❌ <b>Invalid card format:</b> <code>{card}</code>"
+        return f"❌ <b>Invalid Card Format:</b> <code>{card}</code>"
     
     if status == "approved":
         emoji = "✅"
@@ -1079,26 +1073,22 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
         emoji = "❌"
         color = "🔴"
         status_text = "DECLINED"
-    
+
     result = f"""
-{color} <b>{status_text}</b> {color}
+❌<b>{status_text}</b>❌
 ══════════════════════
-<b>Card:</b> <code>{masked_card}</code>
-<b>Expiry:</b> {mon}/{year}
-<b>CVV:</b> <code>{cvv}</code>
-<b>Status:</b> {emoji} {status_text}
-<b>Response:</b> {message}
+<b>[ϟ] Card:</b> <code>{masked_card}|{mon}/{year}|{cvv}</code>
+<b>[ϟ] Status:</b> {emoji} {status_text}
+<b>[ϟ] Response:</b> {message}
 ══════════════════════
 """
-    
     if credits_left is not None:
-        result += f"<b>Credits Left:</b> {credits_left}\n"
-    
+        result += f"<b>[ϟ] Checked By:</b> @{user.get('username', 'N/A')}\n"
+        result += f"<b>[ϟ] Credits:</b> {credits_left}\n"
     if user_stats:
-        result += f"<b>Today:</b> ✅{user_stats['approved']} ❌{user_stats['declined']}\n"
-        result += f"<b>Total:</b> ✅{user_stats['total_approved']} ❌{user_stats['total_declined']}\n"
-    
-    result += "══════════════════════"
+        result += f"<b>[ϟ] Today:</b> ✅{user_stats['approved']} ❌{user_stats['declined']}\n"
+        result += f"<b>[ϟ] Total:</b> ✅{user_stats['total_approved']} ❌{user_stats['total_declined']}\n"
+    result += "╚━━━━━━「DARKXCODE CHECKER」━━━━━━╝"
     return result
 
 # ==================== COMMAND HANDLERS ====================
@@ -1138,15 +1128,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Handle referral if it's a new user with referrer
     if referrer_id and referrer_id != user_id and not user.get('referrer_id'):
         updates['referrer_id'] = referrer_id
-        updates['credits'] = user.get('credits', 0) + 100  # New user gets 10 credits
+        updates['credits'] = user.get('credits', 0) + 20  # New user gets 20 credits
         
         # Update referrer's credits in Firebase
         try:
             referrer_ref = db.collection('users').document(str(referrer_id))
             referrer_ref.update({
-                "credits": firestore.Increment(50),
+                "credits": firestore.Increment(100),
                 "referrals_count": firestore.Increment(1),
-                "earned_from_referrals": firestore.Increment(50)
+                "earned_from_referrals": firestore.Increment(100)
             })
         except Exception as e:
             logger.error(f"Error updating referrer: {e}")
@@ -1164,16 +1154,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         # Use HTML parsing to avoid markdown issues
-        welcome_text = f"""<b>🔒 PRIVATE CHANNEL ACCESS REQUIRED</b>
+        welcome_text = f"""<b>🔒 CHANNEL JOIN REQUIRED</b>
 ══════════════════════
-To access {BOT_INFO['name']}, you must join our private channel.
+To Access {BOT_INFO['name']}, You Must Join Our Channel.
 
 <b>Steps:</b>
-1. Click 'Join Private Channel'
-2. Wait for admin approval
-3. Click 'Verify Join'
-
-<i>Note: Private channel requires manual approval.</i>
+1. Click 'Join Channel'
+2. After Joining Click 'Verify Join'
 """
         
         await message.reply_text(
@@ -1192,7 +1179,7 @@ To access {BOT_INFO['name']}, you must join our private channel.
     # Check if user came from referral
     referral_bonus_text = ""
     if user.get('referrer_id'):
-        referral_bonus_text = f"🎁 <b>Referral Bonus:</b> +10 credits (from invitation)\n"
+        referral_bonus_text = f"🎁 <b>Referral Bonus:</b> +20 credits (from invitation)\n"
     
     # Prepare welcome message using HTML
     user_credits = user.get('credits', 0)
@@ -1206,49 +1193,35 @@ To access {BOT_INFO['name']}, you must join our private channel.
 
 <b>Account Overview:</b>
 • Credits: <b>{user_credits}</b>
-• Today: ✅ {approved_cards} ❌ {declined_cards}
+• Today Checks: Approved {approved_cards} Declined {declined_cards}
 • Total Checks: <b>{total_checks}</b>
 {referral_bonus_text}
 <b>User Commands:</b>
-• <code>/chk cc|mm|yy|cvv</code> - Check single card
-• <code>/mchk</code> - Upload file for mass check
-• <code>/credits</code> - Check balance
-• <code>/claim CODE</code> - Redeem gift code
-• <code>/info</code> - Bot information
-• <code>/invite</code> - Invite friends & earn credits
-• <code>/cancel</code> - Cancel mass check
-• <code>/help</code> - This help
+• <code>/chk cc|mm|yy|cvv</code> - Check Single Card
+• <code>/mchk</code> - Upload File For Mass Check
+• <code>/credits</code> - Check Credits
+• <code>/claim CODE</code> - Redeem Gift Code
+• <code>/info</code> - Bot Information
+• <code>/invite</code> - Invite Friends & Earn Credits
+• <code>/cancel</code> - Cancel Mass Check
+• <code>/help</code> - See All Commands
 """
     
     # Add admin commands if user is admin
     if is_admin:
         welcome_text += """
 <b>Admin Commands:</b>
-• <code>/addcr user_id amount</code> - Add credits
-• <code>/gengift credits max_uses</code> - Create gift code
-• <code>/listgifts</code> - List all gift codes
-• <code>/userinfo user_id</code> - View user info
-• <code>/botinfo</code> - Bot statistics
+• <code>/addcr user_id amount</code> - Add Credits
+• <code>/gengift credits max_uses</code> - Create Gift Code
+• <code>/listgifts</code> - List All Gift Codes
+• <code>/userinfo user_id</code> - View User Info
+• <code>/botinfo</code> - Bot Statistics
 """
     
     welcome_text += """
 <b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
 """
-    
-    # Add navigation buttons
-    keyboard = [
-        [InlineKeyboardButton("⚡ Check Card", callback_data="quick_check")],
-        [InlineKeyboardButton("📊 Mass Check", callback_data="mass_check")],
-        [InlineKeyboardButton("💰 My Credits", callback_data="my_credits"),
-         InlineKeyboardButton("🤝 Invite & Earn", callback_data="invite")]
-    ]
-    
-    # Add admin panel button for admins
-    if is_admin:
-        keyboard.append([InlineKeyboardButton("👑 Admin Panel", callback_data="admin_panel")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
     
     await message.reply_text(
         welcome_text,
@@ -1279,31 +1252,29 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Total Checks: <b>{user.get('total_checks', 0)}</b>
 
 <b>User Commands:</b>
-• <code>/start</code> - Start bot
-• <code>/chk cc|mm|yy|cvv</code> - Check single card
-• <code>/mchk</code> - Upload file for mass check
-• <code>/credits</code> - Check balance
-• <code>/claim CODE</code> - Redeem gift code
-• <code>/invite</code> - Invite friends & earn credits
-• <code>/info</code> - This information
-• <code>/cancel</code> - Cancel mass check
-• <code>/help</code> - All commands
+• <code>/chk cc|mm|yy|cvv</code> - Check Single Card
+• <code>/mchk</code> - Upload File For Mass Check
+• <code>/credits</code> - Check Credits
+• <code>/claim CODE</code> - Redeem Gift Code
+• <code>/info</code> - Bot Information
+• <code>/invite</code> - Invite Friends & Earn Credits
+• <code>/cancel</code> - Cancel Mass Check
+• <code>/help</code> - See All Commands
 """
     
     # Add admin commands if user is admin
     if is_admin:
         info_text += """
 <b>Admin Commands:</b>
-• <code>/addcr user_id amount</code> - Add credits
-• <code>/gengift credits max_uses</code> - Create gift code
-• <code>/listgifts</code> - List all gift codes
-• <code>/userinfo user_id</code> - View user info
-• <code>/botinfo</code> - Bot statistics
+• <code>/addcr user_id amount</code> - Add Credits
+• <code>/gengift credits max_uses</code> - Create Gift Code
+• <code>/listgifts</code> - List All Gift Codes
+• <code>/userinfo user_id</code> - View User Info
+• <code>/botinfo</code> - Bot Statistics
 """
     
     info_text += """
 <b>Owner:</b> 👑 @ISHANT_OFFICIAL
-<b>Support:</b> Contact @ISHANT_OFFICIAL
 ══════════════════════
 """
     
@@ -1350,15 +1321,10 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*Available Credits:* {user['credits']}\n"
         f"*Credits Spent:* {user.get('credits_spent', 0)}\n"
         f"*Referrals:* {referrals_count} users (+{earned_from_referrals} credits earned)\n\n"
-        f"*Credit Usage:*\n"
-        f"• Single check: 1 credit (deducted for any check attempt)\n"
-        f"• Mass check: 1 credit per card (deducted for all processed cards)\n\n"
         f"*Get More Credits:*\n"
-        f"1. Invite friends: +50 credits each\n"
-        f"2. Claim gift codes with /claim\n"
-        f"3. Ask admin for credits\n"
-        f"4. Wait for promotions\n\n"
-        f"*Note:* Credits are deducted for ALL check attempts, approved or declined.",
+        f"1. Invite friends: +100 Credits Each\n"
+        f"2. Claim Gift Codes\n"
+        f"3. Ask Admin For Credits\n",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=reply_markup
     )
@@ -1395,16 +1361,16 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"══════════════════════\n"
         f"*Your Invite Link:*\n"
         f"`{invite_link}`\n\n"
-        f"*How it works:*\n"
-        f"1. Share your invite link with friends\n"
-        f"2. When they join using your link:\n"
-        f"   • You get 50 credits\n"
-        f"   • They get 10 credits\n"
-        f"3. Earn unlimited credits!\n\n"
+        f"*How It Works:*\n"
+        f"1. Share Your Invite Link With Friends\n"
+        f"2. When They Join Using Your Link:\n"
+        f"   • You Get 100 Credits\n"
+        f"   • They Get 20 Credits\n"
+        f"3. Earn Unlimited Credits!\n\n"
         f"*Your Stats:*\n"
-        f"• Referrals: {user.get('referrals_count', 0)} users\n"
-        f"• Earned from Referrals: {user.get('earned_from_referrals', 0)} credits\n\n"
-        f"*Copy and share your link now!*",
+        f"• Referrals: {user.get('referrals_count', 0)} Users\n"
+        f"• Earned From Referrals: {user.get('earned_from_referrals', 0)} Credits\n\n"
+        f"*Copy And Share Your Link Now!*",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=reply_markup
     )
@@ -1454,12 +1420,12 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "<b>💰 INSUFFICIENT CREDITS</b>\n"
             "══════════════════════\n"
-            "You don't have enough credits to check cards.\n\n"
+            "You Don't Have Enough Credits To Check Cards.\n\n"
             "<b>Options:</b>\n"
-            "• Invite friends with /invite\n"
-            "• Claim a gift code with /claim\n"
-            "• Contact admin for credits\n\n"
-            "<b>Your balance:</b> 0 credits",
+            "• Invite Friends\n"
+            "• Claim A Gift Code\n"
+            "• Contact Admin For Credits\n\n"
+            f"<b>Your Balance:</b> {user['credits']}",
             parse_mode=ParseMode.HTML
         )
         return
@@ -1467,7 +1433,6 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send processing message
     processing_msg = await update.message.reply_text(
         "<b>⚡ PROCESSING CARD...</b>\n"
-        "Checking at ultra-fast speed...",
         parse_mode=ParseMode.HTML
     )
     
@@ -1561,11 +1526,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Add credit info if not deducted
     if not credit_deducted:
-        result_text = result_text.replace("══════════════════════", f"══════════════════════\n<b>⚠️ No credit deducted (system error)</b>")
-    
-    # Add speed info
-    speed_text = f"\n<b>Speed:</b> ⚡ {process_time:.2f}s"
-    result_text = result_text.replace("══════════════════════", f"══════════════════════\n{speed_text}")
+        result_text = result_text.replace("══════════════════════", f"══════════════════════\n<b>⚠️ No Credit Deducted</b>")
     
     # Update message with result
     await processing_msg.edit_text(result_text, parse_mode=ParseMode.HTML)
@@ -1585,19 +1546,20 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if user has uploaded a file
     if user_id not in files_storage:
         await update.message.reply_text(
-            "*📁 MASS CHECK INSTRUCTIONS*\n"
-            "══════════════════════\n"
-            "1. Upload a .txt file with cards\n"
-            "2. Then use `/mchk` command again\n\n"
-            "*Format in file:*\n"
-            "`cc|mm|yy|cvv`\n"
-            "`cc|mm|yy|cvv`\n"
-            "...\n\n"
-            "*Features:*\n"
-            "• ⚡ 5 cards/second speed\n"
-            "• Live real-time results\n"
-            "• Cancel anytime with /cancel\n"
-            "• Credits deducted per processed card",
+        "*📊 MASS CHECK SYSTEM*\n"
+        "══════════════════════\n"
+        "To Start A Mass Check:\n"
+        "1. Upload a .txt File With Cards\n"
+        "2. Use `/mchk` Command\n\n"
+        "*Format In File:*\n"
+        "`cc|mm|yy|cvv`\n"
+        "`cc|mm|yy|cvv`\n"
+        "...\n\n"
+        "*Features:*\n"
+        "• Approved Cards Are Shown\n"
+        "• Declined Cards Are Not Shown\n"
+        "• Cancel Anytime With /cancel\n"
+        "• Credits Deducted Per Card\n\n",
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -1639,10 +1601,10 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"*💰 INSUFFICIENT CREDITS*\n"
             f"══════════════════════\n"
-            f"*Cards to check:* {len(valid_cards)}\n"
-            f"*Credits needed:* {len(valid_cards)}\n"
-            f"*Your credits:* {user['credits']}\n\n"
-            f"You need {len(valid_cards) - user['credits']} more credits.",
+            f"*Cards To Check:* {len(valid_cards)}\n"
+            f"*Credits Needed:* {len(valid_cards)}\n"
+            f"*Your Credits:* {user['credits']}\n\n"
+            f"You Need {len(valid_cards) - user['credits']} More Credits.",
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -1654,11 +1616,9 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*Valid Cards:* {len(valid_cards)}\n"
         f"*Invalid Cards:* {len(invalid_cards)}\n"
         f"*Your Credits:* {user['credits']}\n\n"
-        f"*Credit System:*\n"
-        f"• Credits deducted for all processed cards\n"
-        f"• Cancel anytime with /cancel\n\n"
-        f"*Speed:* ⚡ 5 cards/second\n\n"
-        f"To start, click the button below:",
+        f"\n"
+        f"• Cancel Anytime With /cancel\n\n"
+        f"To Start, Click The Button Below:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🚀 START CHECKING", callback_data=f"start_mass_{len(valid_cards)}")],
@@ -1949,21 +1909,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Total Checks: <b>{user.get('total_checks', 0)}</b>
 
 <b>User Commands:</b>
-• <code>/chk cc|mm|yy|cvv</code> - Check single card
-• <code>/mchk</code> - Upload file for mass check
-• <code>/credits</code> - Check balance
-• <code>/claim CODE</code> - Redeem gift code
-• <code>/invite</code> - Invite friends & earn credits
-• <code>/info</code> - Bot information
-• <code>/cancel</code> - Cancel mass check
-• <code>/help</code> - This help
+• <code>/chk cc|mm|yy|cvv</code> - Check Single Card
+• <code>/mchk</code> - Upload File For Mass Check
+• <code>/credits</code> - Check Credits
+• <code>/claim CODE</code> - Redeem Gift Code
+• <code>/info</code> - Bot Information
+• <code>/invite</code> - Invite Friends & Earn Credits
+• <code>/cancel</code> - Cancel Mass Check
+• <code>/help</code> - See All Commands
 
 <b>Admin Commands:</b>
-• <code>/addcr user_id amount</code> - Add credits
-• <code>/gengift credits max_uses</code> - Create gift code
-• <code>/listgifts</code> - List all gift codes
-• <code>/userinfo user_id</code> - View user info
-• <code>/botinfo</code> - Bot statistics
+• <code>/addcr user_id amount</code> - Add Credits
+• <code>/gengift credits max_uses</code> - Create Gift Code
+• <code>/listgifts</code> - List All Gift Codes
+• <code>/userinfo user_id</code> - View User Info
+• <code>/botinfo</code> - Bot Statistics
 
 <b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
@@ -1979,14 +1939,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Total Checks: <b>{user.get('total_checks', 0)}</b>
 
 <b>User Commands:</b>
-• <code>/chk cc|mm|yy|cvv</code> - Check single card
-• <code>/mchk</code> - Upload file for mass check
-• <code>/credits</code> - Check balance
-• <code>/claim CODE</code> - Redeem gift code
-• <code>/invite</code> - Invite friends & earn credits
-• <code>/info</code> - Bot information
-• <code>/cancel</code> - Cancel mass check
-• <code>/help</code> - This help
+• <code>/chk cc|mm|yy|cvv</code> - Check Single Card
+• <code>/mchk</code> - Upload File For Mass Check
+• <code>/credits</code> - Check Credits
+• <code>/claim CODE</code> - Redeem Gift Code
+• <code>/info</code> - Bot Information
+• <code>/invite</code> - Invite Friends & Earn Credits
+• <code>/cancel</code> - Cancel Mass Check
+• <code>/help</code> - See All Commands
 
 <b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
@@ -2259,9 +2219,8 @@ async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Avg Credits/User: {avg_credits:.1f}\n"
         f"• Active Gift Codes: {total_gift_codes}\n\n"
         f"*System Status:*\n"
-        f"• Setup Cache: {'✅ Active' if 'nonce' in setup_intent_cache else '❌ Expired'}\n"
         f"• Active Checks: {len(checking_tasks)}\n"
-        f"• Storage: {'✅ Firebase' if firebase_connected else '⚠️ In-memory (data lost on restart)'}",
+        f"• Storage: {'✅ Firebase' if firebase_connected else '⚠️ In-memory'}",
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -2307,7 +2266,7 @@ async def start_mass_check_callback(update: Update, context: ContextTypes.DEFAUL
         f"══════════════════════\n"
         f"*Total Cards:* {len(cards)}\n"
         f"*Your Credits:* {user['credits']}\n"
-        f"*Status:* ⚡ Processing at 5 cards/second\n\n"
+        f"*Status:* ⚡ Processing Cards...\n\n"
         f"*Live Results:* Starting...\n"
         f"══════════════════════\n"
         f"✅ Approved: 0\n"
@@ -2371,8 +2330,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
                         f"══════════════════════\n"
                         f"<b>Total Cards:</b> {len(cards)}\n"
                         f"<b>Credits Used:</b> {credits_used}\n"
-                        f"<b>Speed:</b> ⚡ {cards_per_second:.1f} cards/second\n"
-                        f"<b>Status:</b> {progress:.1f}% complete\n\n"
+                        f"<b>Status:</b> {progress:.1f}%\n\n"
                         f"<b>Live Results:</b>\n"
                         f"══════════════════════\n"
                         f"✅ Approved: {approved}\n"
@@ -2479,10 +2437,8 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
 • Total Cards: {len(cards)}
 • ✅ Approved: {approved}
 • ❌ Declined: {declined}
-• Success Rate: {success_rate:.1f}%
 • Credits Used: {credits_used} (only for actual checks)
 • Time Taken: {elapsed:.1f}s
-• Speed: ⚡ {len(cards)/elapsed:.1f} cards/second
 
 <b>Your Balance:</b> {user.get('credits', 0)} credits
 ══════════════════════
@@ -2755,7 +2711,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                         </div>
                         <div class="stat-box">
                             <h4>🤝 Referral</h4>
-                            <p>50 credits each</p>
+                            <p>100 credits each</p>
                         </div>
                         <div class="stat-box">
                             <h4>🛡️ Security</h4>
@@ -2895,9 +2851,8 @@ async def main():
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     
     # Start bot with Pydroid-compatible settings
-    print(f"⚡ Speed: 5 cards/second")
     print(f"📍 Address Rotation: Enabled (US, UK, CA, IN, AU)")
-    print(f"🤝 Invite & Earn: 50 credits per referral")
+    print(f"🤝 Invite & Earn: 100 credits per referral")
     print(f"📊 Database: ✅ Connected")
     print(f"🔐 Admin Commands: {len(ADMIN_IDS)} admin(s)")
     print("✅ Bot is running...")

@@ -4,6 +4,7 @@ import random
 import datetime
 import time
 import os
+from dotenv import load_dotenv
 import re
 import sys
 import aiohttp
@@ -21,6 +22,8 @@ from firebase_admin import credentials, firestore
 import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
+
+load_dotenv()
 
 def init_firebase():
     """Initialize Firebase and return connection status"""
@@ -58,8 +61,6 @@ def escape_markdown_v2(text):
         text = text.replace(char, f'\\{char}')
     return text
 
-# Rest of your code remains the same...<
-
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -68,13 +69,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-BOT_TOKEN = "8572861347:AAEkPQQFkz7LqrzwA_gGz0qkQwZ6W2lzH9o"
-ADMIN_IDS = [8079395886]  # Your Telegram ID
-CHANNEL_LINK = "https://t.me/+zsK6NPGgvSc4NzM1"  # Your private channel link
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",")]
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
 
 # Stripe configuration
-DOMAIN = "https://dainte.com"
-PK = "pk_live_51F0CDkINGBagf8ROVbhXA43bHPn9cGEHEO55TN2mfNGYsbv2DAPuv6K0LoVywNJKNuzFZ4xGw94nVElyYg1Aniaf00QDrdzPhf"
+DOMAIN = os.getenv("DOMAIN", "")
+PK = os.getenv("STRIPE_PK", "")
 
 # Bot info
 BOT_INFO = {
@@ -692,7 +693,6 @@ async def admin_addcr_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         "`/addcr 123456789 100`\n\n"
         "This will add 100 credits to user 123456789.",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]])
     )
 
 async def admin_gengift_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -713,7 +713,6 @@ async def admin_gengift_callback(update: Update, context: ContextTypes.DEFAULT_T
         "`/gengift 50 10`\n\n"
         "This creates a code worth 50 credits, usable 10 times.",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]])
     )
 
 async def admin_listgifts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -751,7 +750,6 @@ async def admin_userinfo_callback(update: Update, context: ContextTypes.DEFAULT_
         "`/userinfo 123456789`\n\n"
         "This will show detailed info about the user.",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]])
     )
 
 async def admin_botinfo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

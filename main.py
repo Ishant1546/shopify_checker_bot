@@ -1427,7 +1427,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Send processing message
     processing_msg = await update.message.reply_text(
-        "<b>⚡ PROCESSING CARD...</b>\n"
+        "<b>⚡ PROCESSING CARD...</b>\n",
         parse_mode=ParseMode.HTML
     )
     

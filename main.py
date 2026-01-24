@@ -1542,14 +1542,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     # Format result
-result_text = format_card_result(
-    result_card, 
-    status, 
-    message_text, 
-    user.get("credits", 0), 
-    user_stats,
-    user.get("username")  # Add username parameter
-)
+    result_text = format_card_result(result_card, status, message_text, user.get("credits", 0), user_stats)
     
     # Add credit info if not deducted
     if not credit_deducted:
@@ -1559,6 +1552,7 @@ result_text = format_card_result(
     await processing_msg.edit_text(result_text, parse_mode=ParseMode.HTML)
 
 async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /mchk command for mass check"""
     """Handle /mchk command for mass check"""
     user_id = update.effective_user.id
     user = await get_user(user_id)

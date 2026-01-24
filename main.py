@@ -184,8 +184,22 @@ def get_billing_address(card_bin=""):
     return random.choice(BILLING_ADDRESSES[country])
 
 def random_email():
-    """Generate random email from combined.py"""
-    return f"Kmo{random.randint(1000,9999)}@gmail.com"
+    """Generate random email"""
+    names = ["Kmo", "Waiyan", "John", "Mike", "David", "Sarah"]
+    random_name = random.choice(names)
+    random_numbers = "".join(str(random.randint(0, 9)) for _ in range(4))
+    return f"{random_name}{random_numbers}@gmail.com"
+
+def escape_html(s):
+    """Escape HTML special characters"""
+    if s is None:
+        return ""
+    return (str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;"))
 
 def get_bin_info(bin_number):
     """Get BIN information from antipublic.cc"""
@@ -625,6 +639,91 @@ async def back_to_start_callback(update: Update, context: ContextTypes.DEFAULT_T
     )
     await start_command(fake_update, context)
 
+def format_universal_result(card_data, status, message=None, credits_left=None, username=None, time_taken=None):
+    """Universal formatting function for both single and mass checks"""
+    try:
+        if isinstance(card_data, str):
+            cc, mon, year, cvv = card_data.split("|")
+        else:
+            # Handle if card_data is already a tuple/list
+            cc, mon, year, cvv = card_data
+        
+        cc_clean = cc.replace(" ", "")
+        
+        # Generate random amount
+        cents = random.randint(50, 99)
+        
+        # Generate random time if not provided
+        if time_taken is None:
+            time_taken = random.uniform(1.5, 3.5)
+        
+        # Get BIN info
+        bin_info = get_bin_info(cc_clean[:6])
+        
+        # Determine icon and status text
+        if status == "approved":
+            icon = "🟢"
+            status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝 🔥"
+        elif "Insufficient Funds" in str(message):
+            icon = "🟡"
+            status_text = "INSUFFICIENT_FUNDS 🔥"
+        elif "Card not supported" in str(message):
+            icon = "🟡"
+            status_text = "Card not supported"
+        elif "Incorrect CVV" in str(message):
+            icon = "🔴"
+            status_text = "security code is incorrect/invalid"
+        else:
+            icon = "🔴"
+            status_text = "Declined"
+        
+        # If message contains special status, use it
+        if message:
+            msg_str = str(message)
+            if "✅ Charged" in msg_str:
+                status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝 🔥"
+            elif "❌" in msg_str:
+                status_text = msg_str.replace("❌ ", "")
+        
+        # Generate email
+        email_show = random_email()
+        
+        # Format the result
+        result = f"""
+━━━━━━━━━━━━━━━━━━━━
+{icon} <b>RESULT</b> : <b>{status_text}</b>
+💸 <b>AMOUNT</b> : <code>0.{cents:02d}$</code>
+⏱ <b>TIME</b> : <code>{time_taken:.2f}s</code>
+📧 <b>EMAIL</b> : <code>{email_show}</code>
+━━━━━━━━━━━━━━━━━━━━
+
+💳 <b>CARD</b>
+<code>{cc}|{mon}|{year}|{cvv}</code>
+
+🏦 <b>BIN INFO</b>
+• <b>Bank</b> : {bin_info['bank']}
+• <b>Country</b> : {bin_info['country']} {bin_info['country_flag']}
+• <b>BIN</b> : <code>{cc_clean[:6]}</code>
+
+━━━━━━━━━━━━━━━━━━━━
+"""
+        
+        # Add user info if available
+        if username:
+            result += f"👤 <b>User</b> : @{username}\n"
+        
+        # Add credits if available
+        if credits_left is not None:
+            result += f"💳 <b>Credits</b> : <code>{credits_left}</code>\n"
+        
+        result += "🤖 <b>DARKXCODE CHECKER</b>"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in format_universal_result: {e}")
+        return f"❌ <b>Error formatting result:</b> <code>{str(e)[:50]}</code>"
+
 async def quick_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quick check callback"""
     query = update.callback_query
@@ -1037,40 +1136,24 @@ def log_charged_only(message_text, chat_id=None, username=None):
     except Exception as e:
         logger.error(f"Error in log_charged_only: {e}")
 
-def format_card_result(card, status, message, credits_left=None, user_stats=None, username=None):
-    """Format card checking result with advanced styling"""
+def format_card_result(card, status, message, credits_left=None, user_stats=None):
+    """Wrapper for backward compatibility - uses universal format"""
     try:
         cc, mon, year, cvv = card.split("|")
-        masked_card = f"{cc[:16]}"
-    except:
-        return f"❌ <b>Invalid Card Format:</b> <code>{card}</code>"
-    
-    if status == "approved":
-        emoji = "✅"
-        color = "🟢"
-        status_text = "APPROVED"
-    else:
-        emoji = "❌"
-        color = "🔴"
-        status_text = "DECLINED"
-
-    result = f"""
-❌<b>{status_text}</b>❌
-══════════════════════
-<b>[ϟ] Card:</b> <code>{masked_card}|{mon}/{year}|{cvv}</code>
-<b>[ϟ] Status:</b> {emoji} {status_text}
-<b>[ϟ] Response:</b> {message}
-══════════════════════
-"""
-    if credits_left is not None:
-        if username:
-            result += f"<b>[ϟ] Checked By:</b> @{username}\n"
-        result += f"<b>[ϟ] Credits:</b> {credits_left}\n"
-    if user_stats:
-        result += f"<b>[ϟ] Today:</b> ✅{user_stats['approved']} ❌{user_stats['declined']}\n"
-        result += f"<b>[ϟ] Total:</b> ✅{user_stats['total_approved']} ❌{user_stats['total_declined']}\n"
-    result += "╚━━━━━━「DARKXCODE CHECKER」━━━━━━╝"
-    return result
+        
+        # Calculate time taken based on status
+        time_taken = random.uniform(1.5, 2.5) if status == "approved" else random.uniform(0.8, 1.8)
+        
+        return format_universal_result(
+            card_data=card,
+            status=status,
+            message=message,
+            credits_left=credits_left,
+            username=None,  # Can be added if needed
+            time_taken=time_taken
+        )
+    except Exception as e:
+        return f"❌ <b>Error:</b> <code>{str(e)[:50]}</code>"
 
 # ==================== COMMAND HANDLERS ====================
 
@@ -1360,6 +1443,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /chk command for single card check"""
     user_id = update.effective_user.id
     user = await get_user(user_id)
+    username = update.effective_user.username or "NoUsername"
     
     if not user.get('joined_channel', False):
         await update.message.reply_text(
@@ -1423,10 +1507,10 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check the card using the working function
     result_card, status, message_text, http_code = await check_single_card_fast(card_input)
     
-    # Calculate processing time
-    process_time = time.time() - start_time
+    # Calculate actual processing time
+    actual_time = time.time() - start_time
     
-    # Always deduct credit for checks (like in combined.py)
+    # Always deduct credit for checks
     credit_deducted = True
     today_date = datetime.datetime.now().date().isoformat()
     
@@ -1460,123 +1544,208 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Refresh user data
     user = await get_user(user_id)
     
-    # Prepare user stats for display
-    user_stats = {
-        "approved": user.get("approved_cards", 0),
-        "declined": user.get("declined_cards", 0),
-        "total_approved": user.get("approved_cards", 0),
-        "total_declined": user.get("declined_cards", 0)
-    }
-    
-    # Format result
-    result_text = format_card_result(result_card, status, message_text, user.get("credits", 0), user_stats)
+    # Format result using universal format
+    result_text = format_universal_result(
+        card_data=result_card,
+        status=status,
+        message=message_text,
+        credits_left=user.get("credits", 0),
+        username=username,
+        time_taken=actual_time
+    )
     
     # Log charged cards
     if status == "approved":
-        log_charged_only(result_text, update.message.chat_id, update.effective_user.username)
+        log_charged_only(result_text, update.message.chat_id, username)
     
     # Update message with result
     await processing_msg.edit_text(result_text, parse_mode=ParseMode.HTML)
 
-async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /mchk command for mass check"""
-    """Handle /mchk command for mass check"""
-    user_id = update.effective_user.id
+async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context):
+    """ULTRA-FAST mass checking with universal format"""
+    processed = 0
+    approved = 0
+    declined = 0
+    credits_used = 0  # Track actual credits used
+    user = await get_user(user_id)
+    username = None  # We'll get this from user data
+    
+    # Get username
+    user_data = await get_user(user_id)
+    username = user_data.get('username', 'NoUsername')
+    
+    # Calculate initial credits
+    initial_credits = user.get("credits", 0)
+    
+    # Create session for reuse
+    connector = aiohttp.TCPConnector(ssl=False)
+    timeout = aiohttp.ClientTimeout(total=30)
+    
+    try:
+        session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+        
+        # Process cards one by one
+        for i, card in enumerate(cards):
+            # Check if cancelled
+            if user_id in checking_tasks and checking_tasks[user_id]["cancelled"]:
+                break
+            
+            # Update status every 5 cards
+            if i % 5 == 0 or i == len(cards) - 1:
+                elapsed = time.time() - checking_tasks[user_id]["start_time"]
+                progress = (processed / len(cards)) * 100
+                
+                try:
+                    await status_msg.edit_text(
+                        f"<b>🚀 MASS CHECK IN PROGRESS</b>\n"
+                        f"══════════════════════\n"
+                        f"<b>Total Cards:</b> {len(cards)}\n"
+                        f"<b>Credits Used:</b> {credits_used}\n"
+                        f"<b>Status:</b> {progress:.1f}%\n\n"
+                        f"<b>Live Results:</b>\n"
+                        f"══════════════════════\n"
+                        f"✅ Approved: {approved}\n"
+                        f"❌ Declined: {declined}\n"
+                        f"⏳ Processed: {processed}/{len(cards)}",
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception:
+                    pass
+            
+            # Check single card
+            start_time = time.time()
+            result_card, status, message, http_code = await check_single_card_fast(card)
+            actual_time = time.time() - start_time
+            
+            processed += 1
+            
+            # Update task data
+            if user_id in checking_tasks:
+                checking_tasks[user_id]["cards_processed"] = processed
+            
+            # Determine if it's an actual decline or error
+            message_lower = str(message).lower() if message else ""
+            is_actual_decline = any(keyword in message_lower for keyword in [
+                'card', 'declined', 'insufficient', 'invalid', 'incorrect', 
+                'expired', 'stolen', 'lost', 'fraud', 'limit', 'balance'
+            ])
+            
+            is_error = any(keyword in message_lower for keyword in [
+                'setup error', 'timeout', 'http error', 'network error', 
+                'connection error', 'server error', 'internal error'
+            ])
+            
+            if status == "approved":
+                approved += 1
+                credits_used += 1
+                if user_id in checking_tasks:
+                    checking_tasks[user_id]["approved"] = approved
+                
+                # Send approved result using universal format
+                try:
+                    # Get current user credits
+                    current_user = await get_user(user_id)
+                    current_credits = current_user.get("credits", 0) - credits_used
+                    
+                    result_text = format_universal_result(
+                        card_data=result_card,
+                        status=status,
+                        message=message,
+                        credits_left=current_credits,
+                        username=username,
+                        time_taken=actual_time
+                    )
+                    
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=result_text,
+                        parse_mode=ParseMode.HTML
+                    )
+                    
+                    # Log charged cards
+                    log_charged_only(result_text, chat_id, username)
+                    
+                except Exception as e:
+                    logger.error(f"Error sending approved result: {e}")
+                    
+            elif status == "declined" and is_actual_decline and not is_error:
+                declined += 1
+                credits_used += 1
+                if user_id in checking_tasks:
+                    checking_tasks[user_id]["declined"] = declined
+            else:
+                # This was an error - don't count as decline for credit deduction
+                declined += 1
+                if user_id in checking_tasks:
+                    checking_tasks[user_id]["declined"] = declined
+            
+            # Small delay to avoid rate limiting
+            if i < len(cards) - 1:
+                delay = random.uniform(0.5, 1.5)
+                await asyncio.sleep(delay)
+        
+        # Close session
+        await session.close()
+        
+    except Exception as e:
+        logger.error(f"Error in mass check: {e}")
+    
+    # Final update after all cards processed
+    elapsed = time.time() - checking_tasks[user_id]["start_time"]
+    success_rate = (approved / len(cards) * 100) if cards else 0
+    
+    # Update user data with actual credits used
+    updates = {
+        'credits': initial_credits - credits_used,
+        'credits_spent': user.get("credits_spent", 0) + credits_used,
+        'checks_today': user.get("checks_today", 0) + processed,
+        'total_checks': user.get("total_checks", 0) + processed,
+        'approved_cards': user.get("approved_cards", 0) + approved,
+        'declined_cards': user.get("declined_cards", 0) + declined,
+        'last_check_date': datetime.datetime.now().date().isoformat()
+    }
+    await update_user(user_id, updates)
+    
+    # Update bot statistics with actual credits used
+    await update_bot_stats({
+        'total_checks': processed,
+        'total_credits_used': credits_used,
+        'total_approved': approved,
+        'total_declined': declined
+    })
+    
+    # Refresh user data
     user = await get_user(user_id)
     
-    if not user['joined_channel']:
-        await update.message.reply_text(
-            "❌ Please join our private channel first using /start",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
+    # Send summary with universal format style
+    summary_text = f"""
+━━━━━━━━━━━━━━━━━━━━
+🎯 <b>MASS CHECK COMPLETE</b>
+━━━━━━━━━━━━━━━━━━━━
+
+📊 <b>STATISTICS</b>
+• Total Cards: {len(cards)}
+• ✅ Approved: {approved}
+• ❌ Declined: {declined}
+• Credits Used: {credits_used}
+• Time Taken: {elapsed:.1f}s
+• Success Rate: {success_rate:.1f}%
+
+💳 <b>YOUR BALANCE</b>
+<code>{user.get('credits', 0)} credits</code>
+
+━━━━━━━━━━━━━━━━━━━━
+🤖 <b>DARKXCODE CHECKER</b>
+"""
     
-    # Check if user has uploaded a file
-    if user_id not in files_storage:
-        await update.message.reply_text(
-        "*📊 MASS CHECK SYSTEM*\n"
-        "══════════════════════\n"
-        "To Start A Mass Check:\n"
-        "1. Upload a .txt File With Cards\n"
-        "2. Use `/mchk` Command\n\n"
-        "*Format In File:*\n"
-        "`cc|mm|yy|cvv`\n"
-        "`cc|mm|yy|cvv`\n"
-        "...\n\n"
-        "*Features:*\n"
-        "• Approved Cards Are Shown\n"
-        "• Declined Cards Are Not Shown\n"
-        "• Cancel Anytime With /cancel\n"
-        "• Credits Deducted Per Card\n\n",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-    
-    # Get file info
-    file_info = files_storage[user_id]
-    
-    # Download file
     try:
-        file = await context.bot.get_file(file_info["file_id"])
-        file_content = await file.download_as_bytearray()
-        cards_text = file_content.decode('utf-8')
-        cards = [line.strip() for line in cards_text.split('\n') if line.strip()]
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error reading file: {str(e)[:50]}")
-        return
+        await status_msg.edit_text(summary_text, parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
     
-    if len(cards) == 0:
-        await update.message.reply_text("❌ No cards found in file.")
-        return
-    
-    # Validate cards format
-    valid_cards = []
-    invalid_cards = []
-    
-    for card in cards:
-        parts = card.split("|")
-        if len(parts) == 4:
-            valid_cards.append(card)
-        else:
-            invalid_cards.append(card)
-    
-    if len(valid_cards) == 0:
-        await update.message.reply_text("❌ No valid cards found in file.")
-        return
-    
-    # Check if user has enough credits
-    if user["credits"] < len(valid_cards):
-        await update.message.reply_text(
-            f"*💰 INSUFFICIENT CREDITS*\n"
-            f"══════════════════════\n"
-            f"*Cards To Check:* {len(valid_cards)}\n"
-            f"*Credits Needed:* {len(valid_cards)}\n"
-            f"*Your Credits:* {user['credits']}\n\n"
-            f"You Need {len(valid_cards) - user['credits']} More Credits.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-    
-    # Show confirmation
-    await update.message.reply_text(
-        f"*📊 MASS CHECK READY*\n"
-        f"══════════════════════\n"
-        f"*Valid Cards:* {len(valid_cards)}\n"
-        f"*Invalid Cards:* {len(invalid_cards)}\n"
-        f"*Your Credits:* {user['credits']}\n\n"
-        f"\n"
-        f"• Cancel Anytime With /cancel\n\n"
-        f"To Start, Click The Button Below:",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚀 START CHECKING", callback_data=f"start_mass_{len(valid_cards)}")],
-            [InlineKeyboardButton("❌ CANCEL", callback_data="cancel_mass")]
-        ])
-    )
-    
-    # Store valid cards
-    files_storage[user_id]["cards"] = valid_cards
-    files_storage[user_id]["invalid_cards"] = invalid_cards
+    # Cleanup
+    if user_id in checking_tasks:
+        del checking_tasks[user_id]
 
 async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /claim command for gift codes"""

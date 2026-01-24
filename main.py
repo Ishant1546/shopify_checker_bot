@@ -1076,7 +1076,7 @@ async def mass_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]])
     )
 
-def format_card_result(card, status, message, credits_left=None, user_stats=None):
+def format_card_result(card, status, message, credits_left=None, user_stats=None, username=None):
     """Format card checking result with advanced styling"""
     try:
         cc, mon, year, cvv = card.split("|")
@@ -1102,7 +1102,8 @@ def format_card_result(card, status, message, credits_left=None, user_stats=None
 ══════════════════════
 """
     if credits_left is not None:
-        result += f"<b>[ϟ] Checked By:</b> @{user.get('username', 'N/A')}\n"
+        if username:
+            result += f"<b>[ϟ] Checked By:</b> @{username}\n"
         result += f"<b>[ϟ] Credits:</b> {credits_left}\n"
     if user_stats:
         result += f"<b>[ϟ] Today:</b> ✅{user_stats['approved']} ❌{user_stats['declined']}\n"
@@ -1541,7 +1542,14 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     # Format result
-    result_text = format_card_result(result_card, status, message_text, user.get("credits", 0), user_stats)
+result_text = format_card_result(
+    result_card, 
+    status, 
+    message_text, 
+    user.get("credits", 0), 
+    user_stats,
+    user.get("username")  # Add username parameter
+)
     
     # Add credit info if not deducted
     if not credit_deducted:
@@ -2393,7 +2401,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
                 
                 # Send approved result
                 try:
-                    result_text = format_card_result(result_card, status, message)
+                    result_text = format_card_result(result_card, status, message, None, None, None)
                     await context.bot.send_message(
                         chat_id=chat_id,
                         text=result_text,

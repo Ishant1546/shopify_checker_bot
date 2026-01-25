@@ -34,7 +34,7 @@ def init_firebase():
             "type": os.getenv("FIREBASE_TYPE", "service_account"),
             "project_id": os.getenv("FIREBASE_PROJECT_ID", ""),
             "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID", ""),
-            "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace('\\n', '\n'),
+            "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace('\\n', '\n') if os.getenv("FIREBASE_PRIVATE_KEY") else "",
             "client_email": os.getenv("FIREBASE_CLIENT_EMAIL", ""),
             "client_id": os.getenv("FIREBASE_CLIENT_ID", ""),
             "auth_uri": os.getenv("FIREBASE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth"),
@@ -43,11 +43,29 @@ def init_firebase():
             "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL", "")
         }
         
+        # Check if any Firebase credentials are provided
+        has_firebase_creds = any([
+            firebase_config.get("project_id"),
+            firebase_config.get("private_key"),
+            firebase_config.get("client_email")
+        ])
+        
+        if not has_firebase_creds:
+            print("ℹ️  No Firebase credentials found. Using in-memory storage.")
+            return None, False
+        
         # Validate required fields
         required_fields = ["project_id", "private_key", "client_email"]
+        missing_fields = []
+        
         for field in required_fields:
             if not firebase_config.get(field):
-                raise ValueError(f"Missing required Firebase config: {field}")
+                missing_fields.append(field)
+        
+        if missing_fields:
+            print(f"⚠️  Missing Firebase config fields: {', '.join(missing_fields)}")
+            print("⚠️  Using in-memory storage (data will be lost on restart)")
+            return None, False
         
         # Initialize Firebase
         cred = credentials.Certificate(firebase_config)
@@ -95,9 +113,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",")]
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
 
-# Stripe configuration from combined.py
-DOMAIN = os.getenv("DOMAIN", "")
-PK = os.getenv("STRIPE_PK", ")
+DOMAIN = os.getenv("DOMAIN", "https://texassouthernacademy.com")
+PK = os.getenv("STRIPE_PK", "pk_live_51LTAH3KQqBJAM2n1ywv46dJsjQWht8ckfcm7d15RiE8eIpXWXUvfshCKKsDCyFZG48CY68L9dUTB0UsbDQe32Zn700Qe4vrX0d")
 
 # Bot info
 BOT_INFO = {

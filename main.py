@@ -96,14 +96,14 @@ ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",")]
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
 
 # Stripe configuration from combined.py
-DOMAIN = "https://texassouthernacademy.com"  # Changed to working site
-PK = "pk_live_51LTAH3KQqBJAM2n1ywv46dJsjQWht8ckfcm7d15RiE8eIpXWXUvfshCKKsDCyFZG48CY68L9dUTB0UsbDQe32Zn700Qe4vrX0d"  # From combined.py
+DOMAIN = os.getenv("DOMAIN", "")
+PK = os.getenv("STRIPE_PK", ")
 
 # Bot info
 BOT_INFO = {
     "name": "⚡ DARKXCODE STRIPE CHECKER ⚡",
-    "version": "2.0",
-    "creator": "@botcodexx",  # Updated from combined.py
+    "version": "1.0",
+    "creator": "@ISHANT_OFFICIAL",  # Updated from combined.py
     "gates": "Stripe",
     "features": "• Fast Single Check\n• Mass Checks\n• Real-time Statistics\n• Invite & Earn System"
 }

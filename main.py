@@ -2051,25 +2051,8 @@ To Access {BOT_INFO['name']}, You Must Join Our Channel.
 ══════════════════════
 """
 
-    # FIX: Create reply_markup for users who have joined channel
-    keyboard = [
-        [InlineKeyboardButton("⚡ Quick Check", callback_data="quick_check")],
-        [InlineKeyboardButton("📊 Mass Check", callback_data="mass_check")],
-        [InlineKeyboardButton("💰 My Credits", callback_data="my_credits")],
-        [InlineKeyboardButton("🤝 Invite & Earn", callback_data="invite")]
-    ]
-
-    # Add admin panel button for admins
-    if is_admin:
-        keyboard.append([
-            InlineKeyboardButton("👑 Admin Panel", callback_data="admin_panel")
-        ])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await message.reply_text(welcome_text,
-                             parse_mode=ParseMode.HTML,
-                             reply_markup=reply_markup)
+                             parse_mode=ParseMode.HTML,)
 
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

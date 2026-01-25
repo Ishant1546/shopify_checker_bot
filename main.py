@@ -1312,7 +1312,6 @@ To Access {BOT_INFO['name']}, You Must Join Our Channel.
     await message.reply_text(
         welcome_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=reply_markup
     )
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

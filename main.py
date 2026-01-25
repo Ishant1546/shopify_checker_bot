@@ -694,10 +694,10 @@ def format_universal_result(card_data, status, message=None, credits_left=None, 
             icon = "🟡"
             status_text = "Card not supported"
         elif "Incorrect CVV" in str(message):
-            icon = "🔴"
+            icon = "❌"
             status_text = "security code is incorrect/invalid"
         else:
-            icon = "🔴"
+            icon = "❌"
             status_text = "Declined"
         
         # If message contains special status, use it
@@ -717,7 +717,6 @@ def format_universal_result(card_data, status, message=None, credits_left=None, 
 {icon} <b>RESULT</b> : <b>{status_text}</b>
 💸 <b>AMOUNT</b> : <code>0.{cents:02d}$</code>
 ⏱ <b>TIME</b> : <code>{time_taken:.2f}s</code>
-📧 <b>EMAIL</b> : <code>{email_show}</code>
 ━━━━━━━━━━━━━━━━━━━━
 
 💳 <b>CARD</b>
@@ -739,7 +738,8 @@ def format_universal_result(card_data, status, message=None, credits_left=None, 
         if credits_left is not None:
             result += f"💳 <b>Credits</b> : <code>{credits_left}</code>\n"
         
-        result += "🤖 <b>DARKXCODE CHECKER</b>"
+        # Add clickable bot link
+        result += '<a href="https://t.me/darkxcode_stripe_bot">🤖 <b>DARKXCODE CHECKER</b></a>'
         
         return result
         

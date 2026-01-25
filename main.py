@@ -2687,7 +2687,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
 • Total Cards: {len(cards)}
 • ✅ Approved: {approved}
 • ❌ Declined: {declined}
-• Credits Used: {credits_used} (only for actual checks)
+• Credits Used: {credits_used}
 • Time Taken: {elapsed:.1f}s
 • Success Rate: {success_rate:.1f}%
 

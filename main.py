@@ -1519,7 +1519,7 @@ To Access {BOT_INFO['name']}, You Must Join Our Channel.
 • <code>/botinfo</code> - Bot Statistics
 """
     
-    welcome_text = """
+    welcome_text += """
 <b>Owner:</b> 👑 @ISHANT_OFFICIAL
 ══════════════════════
 """

@@ -1259,6 +1259,63 @@ async def quick_check_callback(update: Update,
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]]))
+            
+async def mass_check_callback(update: Update,
+                              context: ContextTypes.DEFAULT_TYPE):
+    """Handle mass check callback"""
+    query = update.callback_query
+
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    await query.edit_message_text(
+        "*📊 MASS CHECK SYSTEM*\n"
+        "══════════════════════\n"
+        "To Start A Mass Check:\n"
+        "1. Upload a .txt File With Cards\n"
+        "2. Use `/mchk` Command\n\n"
+        "*Format In File:*\n"
+        "`cc|mm|yy|cvv`\n"
+        "`cc|mm|yy|cvv`\n"
+        "...\n\n"
+        "*Features:*\n"
+        "• Approved Cards Are Shown\n"
+        "• Declined Cards Are Not Shown\n"
+        "• Cancel Anytime With /cancel\n"
+        "• Credits Deducted Per Card\n\n",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]]))
+
+
+async def cancel_mass_callback(update: Update,
+                               context: ContextTypes.DEFAULT_TYPE):
+    """Handle cancel mass button from confirmation"""
+    query = update.callback_query
+
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    user_id = query.from_user.id
+    
+    # Clear any stored files for this user
+    if user_id in files_storage:
+        del files_storage[user_id]
+    
+    await query.edit_message_text(
+        "*❌ MASS CHECK CANCELLED*\n"
+        "══════════════════════\n"
+        "Mass check setup has been cancelled.\n"
+        "No credits were deducted.\n\n"
+        "You can upload a new file anytime using:\n"
+        "`/mchk`",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]]))
 
 
 async def admin_addcr_callback(update: Update,
@@ -2773,6 +2830,10 @@ async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(
             "❌ An error occurred while fetching user info.",
             parse_mode=ParseMode.HTML)
+            
+# ==================== ADD MISSING MASS CHECK CALLBACK ====================
+
+# ==================== MISSING CALLBACK FUNCTIONS ====================
 
 
 async def start_mass_check_callback(update: Update,
@@ -3256,7 +3317,7 @@ async def main():
     application.add_handler(
         CallbackQueryHandler(cancel_check_callback, pattern="^cancel_check_"))
     application.add_handler(
-        CallbackQueryHandler(cancel_check_callback, pattern="^cancel_mass$"))
+        CallbackQueryHandler(cancel_mass_callback, pattern="^cancel_mass$"))
 
     # Admin panel callbacks
     application.add_handler(

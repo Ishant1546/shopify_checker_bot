@@ -144,7 +144,7 @@ BOT_INFO = {
     "creator":
     "@ISHANT_OFFICIAL",
     "gates":
-    "Stripe (jogoka.com)",  # Updated gateway name
+    "Stripe 1$ Charge",  # Updated gateway name
     "features":
     "• Fast Single Check\n• Mass Checks\n• Real-time Statistics\n• Invite & Earn System\n• NEW: jogoka.com Gateway"
 }
@@ -279,11 +279,31 @@ def format_universal_result(card_data,
                             time_taken=None):
     """Universal formatting function for both single and mass checks"""
     try:
+        # Handle different types of card_data
         if isinstance(card_data, str):
-            cc, mon, year, cvv = card_data.split("|")
-        else:
+            if "|" in card_data:
+                cc, mon, year, cvv = card_data.split("|")
+            else:
+                # If only card number is provided, use defaults
+                cc = card_data
+                mon = "01"
+                year = "25"
+                cvv = "123"
+        elif isinstance(card_data, (tuple, list)):
             # Handle if card_data is already a tuple/list
-            cc, mon, year, cvv = card_data
+            if len(card_data) >= 4:
+                cc, mon, year, cvv = card_data[:4]
+            else:
+                cc = card_data[0] if card_data else "0000000000000000"
+                mon = "01"
+                year = "25"
+                cvv = "123"
+        else:
+            # Default fallback
+            cc = "0000000000000000"
+            mon = "01"
+            year = "25"
+            cvv = "123"
 
         cc_clean = cc.replace(" ", "")
 
@@ -300,7 +320,7 @@ def format_universal_result(card_data,
         # Determine icon and status text
         if status == "approved":
             icon = "🟢"
-            status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝 🔥"
+            status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝 1$ 🔥"
         elif "Insufficient Funds" in str(message):
             icon = "🟡"
             status_text = "INSUFFICIENT_FUNDS 🔥"
@@ -317,7 +337,7 @@ def format_universal_result(card_data,
         # If message contains special status, use it
         if message:
             msg_str = str(message)
-            if "✅ Charged" in msg_str:
+            if "🔥 1$ Charged" in msg_str:
                 status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝 🔥"
             elif "❌" in msg_str:
                 status_text = msg_str.replace("❌ ", "")
@@ -358,8 +378,11 @@ def format_universal_result(card_data,
         return result
 
     except Exception as e:
-        logger.error(f"Error in format_universal_result: {e}")
-        return f"❌ <b>Error formatting result:</b> <code>{str(e)[:50]}</code>"
+        logger.error(f"Error in format_universal_result: {e}, card_data: {card_data}")
+        return f"""❌ <b>Error formatting result:</b> <code>{str(e)[:50]}</code>
+<b>Card Data:</b> <code>{str(card_data)[:100]}</code>
+<b>Status:</b> {status}
+<b>Message:</b> {message}"""
 
 
 def random_email():
@@ -735,7 +758,7 @@ async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <b>Card Checking Stats:</b>
 • Total Checks: {format_number(total_checks)}
-• ✅ Approved: {format_number(total_approved)}
+• 🔥 Charge: {format_number(total_approved)}
 • ❌ Declined: {format_number(stats.get('total_declined', 0))}
 • Success Rate: {success_rate:.1f}%
 
@@ -977,6 +1000,12 @@ def uu_again_service():
 async def new_gateway_check(cc, mm, yy, cvv):
     """NEW WORKING CHECKER - Replaces Tele_sync"""
     try:
+        logger.info(f"Checking card: {cc}|{mm}|{yy}|{cvv}")
+        
+    except Exception as e:
+        logger.error(f"Error in new_gateway_check: {e}")
+        return f"{cc}|{mm}|{yy}|{cvv}", "declined", f"❌ Checker error: {str(e)[:20]}", 0
+    try:
         # Parse year
         if len(yy) == 4 and yy.startswith('20'):
             yy = yy[2:]
@@ -1170,7 +1199,7 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 
                 # Determine result
                 if success_flag and status_flag:
-                    return cc, "approved", f"✅ Charged | {msg}", 200
+                    return cc, "approved", f"🔥 1$ Charged | {msg}", 200
                 elif "insufficient funds" in msg.lower():
                     return cc, "declined", "❌ Insufficient Funds", 0
                 elif "security code is incorrect" in msg.lower():
@@ -1202,15 +1231,15 @@ async def check_single_card_fast(card):
         
         # Map results to existing format
         if status == "approved":
-            return result_card, "approved", "✅ Charged", 200
+            return card, "approved", "✅ Charged", 200  # Return original card string, not just cc
         elif "insufficient funds" in message.lower():
-            return result_card, "declined", "❌ Insufficient Funds", 0
+            return card, "declined", "❌ Insufficient Funds", 0
         elif "card not supported" in message.lower():
-            return result_card, "declined", "❌ Card not supported", 0
+            return card, "declined", "❌ Card not supported", 0
         elif "incorrect cvv" in message.lower():
-            return result_card, "declined", "❌ Incorrect CVV", 0
+            return card, "declined", "❌ Incorrect CVV", 0
         else:
-            return result_card, "declined", "❌ Declined", 0
+            return card, "declined", "❌ Declined", 0
             
     except Exception as e:
         logger.error(f"Error in check_single_card_fast: {e}")
@@ -2032,13 +2061,31 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Refresh user data
     user = await get_user(user_id)
 
-    # Format result using universal format
-    result_text = format_universal_result(card_data=result_card,
-                                          status=status,
-                                          message=message_text,
-                                          credits_left=user.get("credits", 0),
-                                          username=username,
-                                          time_taken=actual_time)
+    # DEBUG: Check what result_card contains
+    logger.info(f"Result card: {result_card}, Type: {type(result_card)}")
+    logger.info(f"Status: {status}, Message: {message_text}")
+
+    try:
+        # Format result using universal format
+        result_text = format_universal_result(
+            card_data=result_card,  # This should be the full card string "cc|mm|yy|cvv"
+            status=status,
+            message=message_text,
+            credits_left=user.get("credits", 0),
+            username=username,
+            time_taken=actual_time)
+    except Exception as e:
+        logger.error(f"Format error: {e}, Result card: {result_card}")
+        # Fallback format
+        result_text = f"""<b>❌ FORMAT ERROR</b>
+══════════════════════
+<b>Card:</b> <code>{card_input}</code>
+<b>Status:</b> {status}
+<b>Message:</b> {message_text}
+<b>Time:</b> {actual_time:.2f}s
+<b>Credits Left:</b> {user.get('credits', 0)}
+══════════════════════
+"""
 
     # Log charged cards
     if status == "approved":
@@ -2183,7 +2230,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id,
                     f"<b>Status:</b> {progress:.1f}%\n\n"
                     f"<b>Live Results:</b>\n"
                     f"══════════════════════\n"
-                    f"✅ Approved: {approved}\n"
+                    f"🔥 Charge: {approved}\n"
                     f"❌ Declined: {declined}\n"
                     f"⏳ Processed: {processed}/{len(cards)}",
                     parse_mode=ParseMode.HTML)
@@ -2296,7 +2343,7 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id,
 
 📊 <b>STATISTICS</b>
 • Total Cards: {len(cards)}
-• ✅ Approved: {approved}
+• 🔥 Charge: {approved}
 • ❌ Declined: {declined}
 • Credits Used: {credits_used}
 • Time Taken: {elapsed:.1f}s
@@ -2803,7 +2850,7 @@ async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>Statistics:</b>
 • Total Checks: {total_user_checks}
 • Today's Checks: {user.get('checks_today', 0)}
-• ✅ Approved: {approved_cards}
+• 🔥 Charge: {approved_cards}
 • ❌ Declined: {user.get('declined_cards', 0)}
 • Success Rate: {success_rate:.1f}%
 
@@ -2883,7 +2930,7 @@ async def start_mass_check_callback(update: Update,
         f"*Status:* ⚡ Processing Cards...\n\n"
         f"*Live Results:* Starting...\n"
         f"══════════════════════\n"
-        f"✅ Approved: 0\n"
+        f"🔥 Charge: 0\n"
         f"❌ Declined: 0\n"
         f"⏳ Processed: 0/{len(cards)}",
         parse_mode=ParseMode.MARKDOWN,
@@ -2971,7 +3018,7 @@ async def cancel_check_callback(update: Update,
                 f"══════════════════════\n"
                 f"*Results:*\n"
                 f"• Processed: {processed} cards\n"
-                f"• ✅ Approved: {approved}\n"
+                f"• 🔥 Charge: {approved}\n"
                 f"• ❌ Declined: {declined}\n"
                 f"• Credits Used: {used_credits}\n"
                 f"• Success Rate: {success_rate:.1f}%\n\n"

@@ -680,44 +680,259 @@ async def update_user(user_id, updates):
 
 
 async def get_bot_stats():
-    """Get bot statistics from Firebase"""
-    db = get_db()
-
-    if db:
-        try:
-            stats_ref = db.collection('bot_statistics').document('stats')
-            stats_doc = stats_ref.get()
-            if stats_doc.exists:
-                return stats_doc.to_dict()
-        except Exception as e:
-            logger.error(f"Firebase error in get_bot_stats: {e}")
-
-    # Fallback to in-memory
-    return in_memory_bot_stats
+    """Get bot statistics from Firebase with better error handling"""
+    try:
+        db = get_db()
+        
+        if db:
+            try:
+                stats_ref = db.collection('bot_statistics').document('stats')
+                stats_doc = stats_ref.get()
+                if stats_doc.exists:
+                    stats_data = stats_doc.to_dict()
+                    
+                    # Ensure all required fields exist
+                    default_stats = {
+                        "total_checks": 0,
+                        "total_approved": 0,
+                        "total_declined": 0,
+                        "total_credits_used": 0,
+                        "total_users": 0,
+                        "start_time": datetime.datetime.now().isoformat()
+                    }
+                    
+                    # Merge with defaults to ensure all keys exist
+                    for key, value in default_stats.items():
+                        if key not in stats_data:
+                            stats_data[key] = value
+                    
+                    return stats_data
+            except Exception as e:
+                logger.error(f"Firebase error in get_bot_stats: {e}")
+                # Fall through to in-memory
+    except Exception as e:
+        logger.error(f"Error getting database in get_bot_stats: {e}")
+    
+    # Fallback to in-memory with safe defaults
+    safe_stats = in_memory_bot_stats.copy()
+    
+    # Ensure all required fields exist
+    required_fields = ["total_checks", "total_approved", "total_declined", 
+                       "total_credits_used", "total_users", "start_time"]
+    for field in required_fields:
+        if field not in safe_stats:
+            if field == "start_time":
+                safe_stats[field] = datetime.datetime.now().isoformat()
+            else:
+                safe_stats[field] = 0
+    
+    return safe_stats
 
 
 async def update_bot_stats(updates):
-    """Update bot statistics in Firebase"""
-    db = get_db()
-
-    if db:
-        try:
-            stats_ref = db.collection('bot_statistics').document('stats')
-
-            # Prepare update dictionary with Increment operations
-            firestore_updates = {}
-            for key, value in updates.items():
-                firestore_updates[key] = firestore.Increment(value)
-
-            stats_ref.update(firestore_updates)
-            return
-        except Exception as e:
-            logger.error(f"Firebase error in update_bot_stats: {e}")
-
-    # Fallback to in-memory
+    """Update bot statistics in Firebase with better error handling"""
+    try:
+        db = get_db()
+        
+        if db:
+            try:
+                stats_ref = db.collection('bot_statistics').document('stats')
+                
+                # First, check if document exists
+                stats_doc = stats_ref.get()
+                
+                if not stats_doc.exists:
+                    # Create document with initial values
+                    initial_stats = {
+                        "total_checks": 0,
+                        "total_approved": 0,
+                        "total_declined": 0,
+                        "total_credits_used": 0,
+                        "total_users": 0,
+                        "start_time": firestore.SERVER_TIMESTAMP
+                    }
+                    stats_ref.set(initial_stats)
+                
+                # Prepare update dictionary with Increment operations
+                firestore_updates = {}
+                for key, value in updates.items():
+                    firestore_updates[key] = firestore.Increment(value)
+                
+                # Update the document
+                stats_ref.update(firestore_updates)
+                return
+            except Exception as e:
+                logger.error(f"Firebase error in update_bot_stats: {e}")
+                # Fall through to in-memory update
+    except Exception as e:
+        logger.error(f"Error getting database in update_bot_stats: {e}")
+    
+    # Fallback to in-memory storage
     for key, value in updates.items():
         if key in in_memory_bot_stats:
             in_memory_bot_stats[key] += value
+        else:
+            in_memory_bot_stats[key] = value
+
+
+async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /botinfo command - Shows bot statistics (admin only)"""
+    try:
+        user_id = update.effective_user.id
+        
+        if user_id not in ADMIN_IDS:
+            if update.message:
+                await update.message.reply_text(
+                    "❌ This command is for administrators only.",
+                    parse_mode=ParseMode.MARKDOWN)
+            return
+        
+        # Get stats with error handling
+        try:
+            stats = await get_bot_stats()
+        except Exception as e:
+            logger.error(f"Error getting bot stats: {e}")
+            await update.message.reply_text(
+                "*❌ ERROR LOADING STATISTICS*\n"
+                "Unable to fetch bot statistics. Please try again later.",
+                parse_mode=ParseMode.MARKDOWN)
+            return
+        
+        # Safely parse start_time
+        start_time = stats.get("start_time", datetime.datetime.now())
+        
+        try:
+            if isinstance(start_time, str):
+                if 'Z' in start_time:
+                    start_time = datetime.datetime.fromisoformat(
+                        start_time.replace('Z', '+00:00'))
+                else:
+                    start_time = datetime.datetime.fromisoformat(start_time)
+            elif isinstance(start_time, datetime.datetime):
+                pass  # Already a datetime object
+            elif isinstance(start_time, datetime.date):
+                start_time = datetime.datetime.combine(start_time, datetime.datetime.min.time())
+            else:
+                start_time = datetime.datetime.now()
+        except Exception as e:
+            logger.error(f"Error parsing start_time: {e}")
+            start_time = datetime.datetime.now()
+        
+        # Calculate bot uptime
+        now = datetime.datetime.now()
+        
+        # Handle timezone differences
+        if start_time.tzinfo is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=datetime.timezone.utc)
+        elif start_time.tzinfo is None and now.tzinfo is not None:
+            start_time = start_time.replace(tzinfo=datetime.timezone.utc)
+        
+        uptime = now - start_time
+        days = uptime.days
+        hours = uptime.seconds // 3600
+        minutes = (uptime.seconds % 3600) // 60
+        
+        # Calculate success rate safely
+        total_checks = stats.get("total_checks", 0)
+        total_approved = stats.get("total_approved", 0)
+        
+        if total_checks > 0:
+            success_rate = (total_approved / total_checks) * 100
+        else:
+            success_rate = 0
+        
+        # Calculate average credits per user safely
+        total_users = max(stats.get("total_users", 1), 1)  # Ensure at least 1 to avoid division by zero
+        total_credits_used = stats.get("total_credits_used", 0)
+        avg_credits = total_credits_used / total_users
+        
+        # Get gift codes count from Firebase or memory
+        total_gift_codes = 0
+        try:
+            db = get_db()
+            if db:
+                codes_ref = db.collection('gift_codes')
+                codes_docs = codes_ref.get()
+                total_gift_codes = len(codes_docs)
+            else:
+                total_gift_codes = len(in_memory_gift_codes)
+        except Exception as e:
+            logger.error(f"Error counting gift codes: {e}")
+            total_gift_codes = len(in_memory_gift_codes)
+        
+        # Format start time for display
+        if isinstance(start_time, datetime.datetime):
+            start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            start_time_str = str(start_time)
+        
+        # Build response message
+        response_message = f"""*📊 BOT STATISTICS (ADMIN)*
+══════════════════════
+*Uptime:* {days}d {hours}h {minutes}m
+*Started:* {start_time_str}
+
+*User Statistics:*
+• Total Users: {stats.get('total_users', 0)}
+• Active Checks: {len(checking_tasks)}
+
+*Card Checking Stats:*
+• Total Checks: {total_checks:,}
+• ✅ Approved: {total_approved:,}
+• ❌ Declined: {stats.get('total_declined', 0):,}
+• Success Rate: {success_rate:.1f}%
+
+*Credit Statistics:*
+• Total Credits Used: {total_credits_used:,}
+• Avg Credits/User: {avg_credits:.1f}
+• Active Gift Codes: {total_gift_codes}
+
+*System Status:*
+• Storage: {'✅ Firebase' if firebase_connected else '⚠️ In-memory'}
+• Active Users: {len(in_memory_users)}
+• Files in Queue: {len(files_storage)}
+
+*Bot Info:*
+• Name: {BOT_INFO['name']}
+• Version: {BOT_INFO['version']}
+• Creator: {BOT_INFO['creator']}
+══════════════════════
+"""
+        
+        # Add a back button
+        keyboard = [[
+            InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Send the message
+        if update.message:
+            await update.message.reply_text(
+                response_message,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup)
+        elif update.callback_query:
+            await update.callback_query.message.reply_text(
+                response_message,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup)
+            
+    except Exception as e:
+        logger.error(f"Error in botinfo_command: {e}")
+        error_message = f"""*⚠️ SYSTEM ERROR*
+══════════════════════
+An error occurred while processing botinfo.
+
+*Error details:*
+{str(e)[:100]}
+
+Please try again or contact the developer.
+══════════════════════
+"""
+        if update.message:
+            await update.message.reply_text(
+                error_message,
+                parse_mode=ParseMode.MARKDOWN)
 
 
 async def get_all_gift_codes():
@@ -3109,101 +3324,6 @@ async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(
             "❌ An error occurred while fetching user info.",
             parse_mode=ParseMode.HTML)
-
-
-async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /botinfo command - Shows bot statistics (admin only)"""
-    user_id = update.effective_user.id
-
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text(
-            "❌ This command is for administrators only.",
-            parse_mode=ParseMode.MARKDOWN)
-        return
-
-    stats = await get_bot_stats()
-
-    # Calculate bot uptime
-    start_time = stats["start_time"]
-    if isinstance(start_time, str):
-        # Handle string format
-        try:
-            if 'Z' in start_time:
-                start_time = datetime.datetime.fromisoformat(
-                    start_time.replace('Z', '+00:00'))
-            else:
-                start_time = datetime.datetime.fromisoformat(start_time)
-        except:
-            start_time = datetime.datetime.now()
-    elif isinstance(start_time, datetime.datetime):
-        # Already a datetime object
-        pass
-    else:
-        start_time = datetime.datetime.now()
-
-    # Make both datetimes timezone-aware or naive
-    now = datetime.datetime.now()
-    if start_time.tzinfo is not None and now.tzinfo is None:
-        now = now.replace(tzinfo=datetime.timezone.utc)
-    elif start_time.tzinfo is None and now.tzinfo is not None:
-        start_time = start_time.replace(tzinfo=datetime.timezone.utc)
-
-    uptime = now - start_time
-    days = uptime.days
-    hours = uptime.seconds // 3600
-    minutes = (uptime.seconds % 3600) // 60
-
-    # Calculate success rate
-    total_checks = stats.get("total_checks", 0)
-    total_approved = stats.get("total_approved", 0)
-    success_rate = (total_approved / total_checks *
-                    100) if total_checks > 0 else 0
-
-    # Calculate average credits per user
-    total_users = stats.get("total_users", 1)
-    total_credits_used = stats.get("total_credits_used", 0)
-    avg_credits = total_credits_used / total_users if total_users > 0 else 0
-
-    # Get gift codes count from Firebase
-    total_gift_codes = 0
-    db = get_db()
-    if db:
-        try:
-            codes_ref = db.collection('gift_codes')
-            codes_docs = codes_ref.get()
-            total_gift_codes = len(codes_docs)
-        except Exception as e:
-            logger.error(f"Error counting gift codes: {e}")
-    else:
-        total_gift_codes = len(in_memory_gift_codes)
-
-    # Format start time for display
-    if isinstance(start_time, datetime.datetime):
-        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
-    else:
-        start_time_str = str(start_time)
-
-    await update.message.reply_text(
-        f"*📊 BOT STATISTICS (ADMIN)*\n"
-        f"══════════════════════\n"
-        f"*Uptime:* {days}d {hours}h {minutes}m\n"
-        f"*Started:* {start_time_str}\n\n"
-        f"*User Statistics:*\n"
-        f"• Total Users: {stats.get('total_users', 0)}\n"
-        f"• Active Today: {stats.get('total_users', 0)} (using in-memory storage)\n\n"
-        f"*Card Checking Stats:*\n"
-        f"• Total Checks: {total_checks}\n"
-        f"• ✅ Approved: {total_approved}\n"
-        f"• ❌ Declined: {stats.get('total_declined', 0)}\n"
-        f"• Success Rate: {success_rate:.1f}%\n\n"
-        f"*Credit Statistics:*\n"
-        f"• Total Credits Used: {total_credits_used}\n"
-        f"• Avg Credits/User: {avg_credits:.1f}\n"
-        f"• Active Gift Codes: {total_gift_codes}\n\n"
-        f"*System Status:*\n"
-        f"• Active Checks: {len(checking_tasks)}\n"
-        f"• Storage: {'✅ Firebase' if firebase_connected else '⚠️ In-memory'}",
-        parse_mode=ParseMode.MARKDOWN)
 
 
 # ==================== MASS CHECK FUNCTIONS ====================

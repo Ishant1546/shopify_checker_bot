@@ -115,17 +115,6 @@ def get_db():
     return db
 
 
-# Add this function to properly escape markdown
-def escape_markdown_v2(text):
-    """Escape markdown v2 special characters"""
-    if not text:
-        return text
-    escape_chars = '_*[]()~`>#+-=|{}.!'
-    for char in escape_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
-
-
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -376,14 +365,6 @@ def random_email():
     random_name = random.choice(names)
     random_numbers = "".join(str(random.randint(0, 9)) for _ in range(4))
     return f"{random_name}{random_numbers}@gmail.com"
-
-
-def escape_html(s):
-    """Escape HTML special characters"""
-    if s is None:
-        return ""
-    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(
-        ">", "&gt;").replace('"', "&quot;").replace("'", "&#39;"))
 
 
 def get_bin_info(bin_number):
@@ -784,7 +765,7 @@ async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if update.message:
                 await update.message.reply_text(
                     "❌ This command is for administrators only.",
-                    parse_mode=ParseMode.MARKDOWN)
+                    parse_mode=ParseMode.HTML)
             return
         
         # Get stats with error handling
@@ -793,9 +774,9 @@ async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error getting bot stats: {e}")
             await update.message.reply_text(
-                "*❌ ERROR LOADING STATISTICS*\n"
+                "<b>❌ ERROR LOADING STATISTICS</b>\n"
                 "Unable to fetch bot statistics. Please try again later.",
-                parse_mode=ParseMode.MARKDOWN)
+                parse_mode=ParseMode.HTML)
             return
         
         # Safely parse start_time
@@ -866,36 +847,40 @@ async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             start_time_str = str(start_time)
         
-        # Build response message
-        response_message = f"""*📊 BOT STATISTICS (ADMIN)*
+        # Format large numbers with commas
+        def format_number(num):
+            return f"{num:,}"
+        
+        # Build response message using HTML (safer than markdown)
+        response_message = f"""<b>📊 BOT STATISTICS (ADMIN)</b>
 ══════════════════════
-*Uptime:* {days}d {hours}h {minutes}m
-*Started:* {start_time_str}
+<b>Uptime:</b> {days}d {hours}h {minutes}m
+<b>Started:</b> {start_time_str}
 
-*User Statistics:*
-• Total Users: {stats.get('total_users', 0)}
-• Active Checks: {len(checking_tasks)}
+<b>User Statistics:</b>
+• Total Users: {format_number(stats.get('total_users', 0))}
+• Active Checks: {format_number(len(checking_tasks))}
 
-*Card Checking Stats:*
-• Total Checks: {total_checks:,}
-• ✅ Approved: {total_approved:,}
-• ❌ Declined: {stats.get('total_declined', 0):,}
+<b>Card Checking Stats:</b>
+• Total Checks: {format_number(total_checks)}
+• ✅ Approved: {format_number(total_approved)}
+• ❌ Declined: {format_number(stats.get('total_declined', 0))}
 • Success Rate: {success_rate:.1f}%
 
-*Credit Statistics:*
-• Total Credits Used: {total_credits_used:,}
+<b>Credit Statistics:</b>
+• Total Credits Used: {format_number(total_credits_used)}
 • Avg Credits/User: {avg_credits:.1f}
-• Active Gift Codes: {total_gift_codes}
+• Active Gift Codes: {format_number(total_gift_codes)}
 
-*System Status:*
+<b>System Status:</b>
 • Storage: {'✅ Firebase' if firebase_connected else '⚠️ In-memory'}
-• Active Users: {len(in_memory_users)}
-• Files in Queue: {len(files_storage)}
+• Active Users: {format_number(len(in_memory_users))}
+• Files in Queue: {format_number(len(files_storage))}
 
-*Bot Info:*
-• Name: {BOT_INFO['name']}
+<b>Bot Info:</b>
+• Name: {escape_markdown_v2(BOT_INFO['name'])}
 • Version: {BOT_INFO['version']}
-• Creator: {BOT_INFO['creator']}
+• Creator: {escape_markdown_v2(BOT_INFO['creator'])}
 ══════════════════════
 """
         
@@ -905,26 +890,26 @@ async def botinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Send the message
+        # Send the message using HTML parse mode (safer)
         if update.message:
             await update.message.reply_text(
                 response_message,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup)
         elif update.callback_query:
-            await update.callback_query.message.reply_text(
+            await update.callback_query.edit_message_text(
                 response_message,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup)
             
     except Exception as e:
         logger.error(f"Error in botinfo_command: {e}")
-        error_message = f"""*⚠️ SYSTEM ERROR*
+        error_message = f"""<b>⚠️ SYSTEM ERROR</b>
 ══════════════════════
 An error occurred while processing botinfo.
 
-*Error details:*
-{str(e)[:100]}
+<b>Error details:</b>
+<code>{escape_html(str(e)[:100])}</code>
 
 Please try again or contact the developer.
 ══════════════════════
@@ -932,7 +917,39 @@ Please try again or contact the developer.
         if update.message:
             await update.message.reply_text(
                 error_message,
-                parse_mode=ParseMode.MARKDOWN)
+                parse_mode=ParseMode.HTML)
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(
+                error_message,
+                parse_mode=ParseMode.HTML)
+
+
+def escape_html(text):
+    """Escape HTML special characters"""
+    if text is None:
+        return ""
+    text = str(text)
+    escape_chars = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }
+    for char, replacement in escape_chars.items():
+        text = text.replace(char, replacement)
+    return text
+
+
+def escape_markdown_v2(text):
+    """Escape markdown v2 special characters"""
+    if not text:
+        return text
+    # Escape all markdown special characters
+    escape_chars = '_*[]()~`>#+-=|{}.!'
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
 
 
 async def get_all_gift_codes():
@@ -1480,17 +1497,31 @@ async def admin_botinfo_callback(update: Update,
                                  context: ContextTypes.DEFAULT_TYPE):
     """Handle admin bot info callback"""
     query = update.callback_query
-
+    
     try:
         await query.answer()
     except BadRequest:
         pass
+    
+    # Call the actual command using HTML mode
+    try:
+        # Create a fake update object to call botinfo_command
+        fake_update = Update(update_id=update.update_id,
+                             message=query.message,
+                             callback_query=query)
+        await botinfo_command(fake_update, context)
+    except Exception as e:
+        logger.error(f"Error in admin_botinfo_callback: {e}")
+        error_text = """<b>⚠️ SYSTEM ERROR</b>
+══════════════════════
+An error occurred. Please try again.
 
-    # Call the actual command
-    fake_update = Update(update_id=update.update_id,
-                         message=query.message,
-                         callback_query=query)
-    await botinfo_command(fake_update, context)
+If problem persists, contact admin.
+══════════════════════
+"""
+        await query.edit_message_text(
+            error_text,
+            parse_mode=ParseMode.HTML)
 
 
 async def my_credits_callback(update: Update,

